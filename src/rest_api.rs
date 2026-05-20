@@ -253,42 +253,18 @@ async fn fetch_binance_usdm_funding_rate_history(
 ) -> Result<Vec<FeedItem>, Box<dyn Error>> {
     let mut items = Vec::new();
     let mut failed_requests = 0usize;
+    let context = FundingHistoryFetchContext {
+        client,
+        source,
+        max_items,
+        backfill_start_ms,
+        backfill_end_ms,
+    };
     for asset in prioritized_derivatives_assets(assets) {
-        let mut cursor_ms = backfill_start_ms;
-        while cursor_ms < backfill_end_ms && items.len() < max_items {
-            let request_limit = (max_items - items.len()).min(1000);
-            let page = fetch_funding_history_page(
-                client,
-                source,
-                &asset.reference_symbol_native,
-                cursor_ms,
-                backfill_end_ms,
-                request_limit,
-            )
-            .await;
-            let Ok(page) = page else {
-                failed_requests += 1;
-                break;
-            };
-            if page.records.is_empty() {
-                break;
-            }
-            let last_funding_time = append_funding_history_records(
-                &mut items,
-                max_items,
-                backfill_start_ms,
-                backfill_end_ms,
-                &page,
-                cursor_ms,
-            );
-            if page.records.len() < request_limit {
-                break;
-            }
-            let next_cursor = last_funding_time.saturating_add(1);
-            if next_cursor <= cursor_ms {
-                break;
-            }
-            cursor_ms = next_cursor;
+        if append_asset_funding_history(&context, asset, &mut items).await
+            == FundingHistoryAssetOutcome::RequestFailed
+        {
+            failed_requests += 1;
         }
         if items.len() >= max_items {
             break;
@@ -302,6 +278,93 @@ async fn fetch_binance_usdm_funding_rate_history(
         .into());
     }
     Ok(items)
+}
+
+struct FundingHistoryFetchContext<'a> {
+    client: &'a reqwest::Client,
+    source: &'a Source,
+    max_items: usize,
+    backfill_start_ms: i64,
+    backfill_end_ms: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FundingHistoryAssetOutcome {
+    Complete,
+    RequestFailed,
+}
+
+async fn append_asset_funding_history(
+    context: &FundingHistoryFetchContext<'_>,
+    asset: &UniverseAsset,
+    items: &mut Vec<FeedItem>,
+) -> FundingHistoryAssetOutcome {
+    let mut cursor_ms = context.backfill_start_ms;
+    while should_fetch_funding_history_page(context, cursor_ms, items) {
+        let request_limit = funding_history_request_limit(context, items);
+        let page = fetch_funding_history_page(
+            context.client,
+            context.source,
+            &asset.reference_symbol_native,
+            cursor_ms,
+            context.backfill_end_ms,
+            request_limit,
+        )
+        .await;
+        let Ok(page) = page else {
+            return FundingHistoryAssetOutcome::RequestFailed;
+        };
+        if page.records.is_empty() {
+            return FundingHistoryAssetOutcome::Complete;
+        }
+        let last_funding_time = append_funding_history_records(
+            items,
+            context.max_items,
+            context.backfill_start_ms,
+            context.backfill_end_ms,
+            &page,
+            cursor_ms,
+        );
+        let Some(next_cursor) =
+            next_funding_history_cursor(&page, request_limit, last_funding_time, cursor_ms)
+        else {
+            return FundingHistoryAssetOutcome::Complete;
+        };
+        cursor_ms = next_cursor;
+    }
+    FundingHistoryAssetOutcome::Complete
+}
+
+fn should_fetch_funding_history_page(
+    context: &FundingHistoryFetchContext<'_>,
+    cursor_ms: i64,
+    items: &[FeedItem],
+) -> bool {
+    cursor_ms < context.backfill_end_ms && items.len() < context.max_items
+}
+
+fn funding_history_request_limit(
+    context: &FundingHistoryFetchContext<'_>,
+    items: &[FeedItem],
+) -> usize {
+    (context.max_items - items.len()).min(1000)
+}
+
+fn next_funding_history_cursor(
+    page: &FundingHistoryPage,
+    request_limit: usize,
+    last_funding_time: i64,
+    cursor_ms: i64,
+) -> Option<i64> {
+    if page.records.len() < request_limit {
+        return None;
+    }
+    let next_cursor = last_funding_time.saturating_add(1);
+    if next_cursor <= cursor_ms {
+        None
+    } else {
+        Some(next_cursor)
+    }
 }
 
 struct FundingHistoryPage {
