@@ -85,6 +85,31 @@ from:
 /opt/nangman-crypto/nats-server
 ```
 
+NATS remains a pointer bus, not the canonical store. The crawler publishes only
+after the raw JSONL record is written to object storage. The expected on-prem
+JetStream stream contract is:
+
+```text
+stream: RAW_INTEL
+subject: raw_intel_event.created
+payload schema: raw_intel_event_created_v2
+message id: raw_intel_event.event_id
+duplicate window: at least 120 seconds
+storage: file
+retention: limits
+```
+
+Smoke-check a reachable on-prem NATS endpoint without writing crawler objects:
+
+```bash
+cd /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
+NATS_SMOKE_URL=nats://127.0.0.1:4222 scripts/nats-smoke.sh
+```
+
+The smoke test creates or reuses a small `RAW_INTEL_SMOKE` JetStream stream,
+publishes the same stable message id twice, waits for publish acknowledgments,
+and verifies that JetStream keeps one message.
+
 Default registry:
 
 ```text
@@ -225,6 +250,15 @@ stream `RAW_INTEL` and waits for the server publish acknowledgment before
 counting an event as published. The NATS message id is the stable
 `raw_intel_event` id. The published payload is `raw_intel_event_created_v2` and
 contains a `storage_ref` pointing at a RustFS JSONL record.
+
+Use the smoke test before enabling NATS in a long-running worker:
+
+```bash
+NATS_SMOKE_URL=nats://nats.internal:4222 \
+NATS_SMOKE_STREAM=RAW_INTEL_SMOKE \
+NATS_SMOKE_SUBJECT=raw_intel_event.created.smoke \
+scripts/nats-smoke.sh
+```
 
 Symbol matching is intentionally conservative for common English words. Assets
 such as `NOT`, `NEAR`, `TON`, `BIO`, `CHIP`, `DASH`, `DOGS`, `HIVE`, `MEGA`, and
