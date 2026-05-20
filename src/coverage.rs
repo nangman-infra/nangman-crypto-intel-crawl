@@ -27,68 +27,119 @@ pub(crate) fn build_source_coverage_report(
     registry
         .universe_assets
         .iter()
-        .map(|asset| {
-            let mut enabled_category_counts = BTreeMap::new();
-            let mut direct_source_ids = BTreeSet::new();
-            let mut available_disabled_source_ids = BTreeSet::new();
-            let mut enabled_direct_source_count = 0usize;
-            let mut enabled_global_source_count = 0usize;
-            let mut available_disabled_direct_source_count = 0usize;
-            let mut available_disabled_global_source_count = 0usize;
-
-            for source in &registry.sources {
-                if !source_applies_to_asset(source, &asset.asset) {
-                    continue;
-                }
-                if source.enabled {
-                    *enabled_category_counts
-                        .entry(source.source_category.clone())
-                        .or_insert(0) += 1;
-                    if source.direct_assets().contains(&asset.asset) {
-                        enabled_direct_source_count += 1;
-                        direct_source_ids.insert(source.source_id.clone());
-                    } else {
-                        enabled_global_source_count += 1;
-                    }
-                } else if source.source_state.as_deref() == Some("available_disabled") {
-                    if source.direct_assets().contains(&asset.asset) {
-                        available_disabled_direct_source_count += 1;
-                    } else {
-                        available_disabled_global_source_count += 1;
-                    }
-                    available_disabled_source_ids.insert(source.source_id.clone());
-                }
-            }
-
-            let enabled_source_count = enabled_direct_source_count + enabled_global_source_count;
-            let quality_gaps = quality_gaps(
-                &enabled_category_counts,
-                enabled_direct_source_count,
-                available_disabled_direct_source_count + available_disabled_global_source_count,
-            );
-            SourceCoverageRecord {
-                schema_version: "source_coverage_v1".to_owned(),
-                observed_at_ms,
-                asset: asset.asset.clone(),
-                reference_symbol_native: asset.reference_symbol_native.clone(),
-                coverage_status: coverage_status(
-                    enabled_direct_source_count,
-                    available_disabled_direct_source_count,
-                    enabled_global_source_count,
-                )
-                .to_owned(),
-                enabled_source_count,
-                enabled_direct_source_count,
-                enabled_global_source_count,
-                available_disabled_direct_source_count,
-                available_disabled_global_source_count,
-                enabled_category_counts,
-                direct_source_ids: direct_source_ids.into_iter().collect(),
-                available_disabled_source_ids: available_disabled_source_ids.into_iter().collect(),
-                quality_gaps,
-            }
-        })
+        .map(|asset| build_asset_coverage_record(registry, observed_at_ms, asset))
         .collect()
+}
+
+fn build_asset_coverage_record(
+    registry: &SourceRegistry,
+    observed_at_ms: i64,
+    asset: &crate::registry::UniverseAsset,
+) -> SourceCoverageRecord {
+    let coverage = collect_asset_coverage(registry, &asset.asset);
+    let quality_gaps = coverage.quality_gaps();
+    SourceCoverageRecord {
+        schema_version: "source_coverage_v1".to_owned(),
+        observed_at_ms,
+        asset: asset.asset.clone(),
+        reference_symbol_native: asset.reference_symbol_native.clone(),
+        coverage_status: coverage_status(
+            coverage.enabled_direct_source_count,
+            coverage.available_disabled_direct_source_count,
+            coverage.enabled_global_source_count,
+        )
+        .to_owned(),
+        enabled_source_count: coverage.enabled_source_count(),
+        enabled_direct_source_count: coverage.enabled_direct_source_count,
+        enabled_global_source_count: coverage.enabled_global_source_count,
+        available_disabled_direct_source_count: coverage.available_disabled_direct_source_count,
+        available_disabled_global_source_count: coverage.available_disabled_global_source_count,
+        enabled_category_counts: coverage.enabled_category_counts,
+        direct_source_ids: coverage.direct_source_ids.into_iter().collect(),
+        available_disabled_source_ids: coverage.available_disabled_source_ids.into_iter().collect(),
+        quality_gaps,
+    }
+}
+
+fn collect_asset_coverage(registry: &SourceRegistry, asset: &str) -> AssetCoverage {
+    let mut coverage = AssetCoverage::default();
+    for source in registry
+        .sources
+        .iter()
+        .filter(|source| source_applies_to_asset(source, asset))
+    {
+        coverage.record_source(source, asset);
+    }
+    coverage
+}
+
+#[derive(Debug, Default)]
+struct AssetCoverage {
+    enabled_category_counts: BTreeMap<String, usize>,
+    direct_source_ids: BTreeSet<String>,
+    available_disabled_source_ids: BTreeSet<String>,
+    enabled_direct_source_count: usize,
+    enabled_global_source_count: usize,
+    available_disabled_direct_source_count: usize,
+    available_disabled_global_source_count: usize,
+}
+
+impl AssetCoverage {
+    fn record_source(&mut self, source: &Source, asset: &str) {
+        if source.enabled {
+            self.record_enabled_source(source, asset);
+            return;
+        }
+        if source.source_state.as_deref() == Some("available_disabled") {
+            self.record_available_disabled_source(source, asset);
+        }
+    }
+
+    fn record_enabled_source(&mut self, source: &Source, asset: &str) {
+        *self
+            .enabled_category_counts
+            .entry(source.source_category.clone())
+            .or_insert(0) += 1;
+        if source_has_direct_asset(source, asset) {
+            self.enabled_direct_source_count += 1;
+            self.direct_source_ids.insert(source.source_id.clone());
+        } else {
+            self.enabled_global_source_count += 1;
+        }
+    }
+
+    fn record_available_disabled_source(&mut self, source: &Source, asset: &str) {
+        if source_has_direct_asset(source, asset) {
+            self.available_disabled_direct_source_count += 1;
+        } else {
+            self.available_disabled_global_source_count += 1;
+        }
+        self.available_disabled_source_ids
+            .insert(source.source_id.clone());
+    }
+
+    fn enabled_source_count(&self) -> usize {
+        self.enabled_direct_source_count + self.enabled_global_source_count
+    }
+
+    fn available_disabled_source_count(&self) -> usize {
+        self.available_disabled_direct_source_count + self.available_disabled_global_source_count
+    }
+
+    fn quality_gaps(&self) -> Vec<String> {
+        quality_gaps(
+            &self.enabled_category_counts,
+            self.enabled_direct_source_count,
+            self.available_disabled_source_count(),
+        )
+    }
+}
+
+fn source_has_direct_asset(source: &Source, asset: &str) -> bool {
+    source
+        .direct_assets()
+        .iter()
+        .any(|source_asset| source_asset == asset)
 }
 
 fn source_applies_to_asset(source: &Source, asset: &str) -> bool {

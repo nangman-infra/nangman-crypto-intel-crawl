@@ -42,210 +42,202 @@ impl Args {
         I: Iterator<Item = String>,
     {
         let _program = values.next();
-        let mut args = Args {
-            source_registry: PathBuf::from(DEFAULT_SOURCE_REGISTRY_PATH),
-            max_items_per_source: 50,
-            schedule_interval_ms: None,
-            dry_run: false,
-            source_id: None,
-            nats_url: None,
-            nats_subject: DEFAULT_NATS_SUBJECT.to_owned(),
-            nats_stream: DEFAULT_NATS_STREAM.to_owned(),
-            object_store: ObjectStoreConfig {
-                endpoint: DEFAULT_OBJECT_STORE_ENDPOINT.to_owned(),
-                bucket: DEFAULT_OBJECT_STORE_BUCKET.to_owned(),
-                region: DEFAULT_OBJECT_STORE_REGION.to_owned(),
-                force_path_style: true,
-            },
-            dedup_lookback_days: DEFAULT_DEDUP_LOOKBACK_DAYS,
-            chunk_max_records: DEFAULT_CHUNK_MAX_RECORDS,
-            derivatives_max_events_per_run: DEFAULT_DERIVATIVES_MAX_EVENTS_PER_RUN,
-            derivatives_max_events_per_source: DEFAULT_DERIVATIVES_MAX_EVENTS_PER_SOURCE,
-            community_max_events_per_run: DEFAULT_COMMUNITY_MAX_EVENTS_PER_RUN,
-            community_max_events_per_source: DEFAULT_COMMUNITY_MAX_EVENTS_PER_SOURCE,
-            backfill_start_ms: None,
-            backfill_end_ms: None,
-        };
+        let mut args = default_args();
 
         while let Some(arg) = values.next() {
-            match arg.as_str() {
-                "--source-registry" => {
-                    args.source_registry = absolute_path_arg(
-                        values.next(),
-                        "--source-registry requires an absolute path",
-                    )?;
-                }
-                "--max-items-per-source" => {
-                    let value = values
-                        .next()
-                        .ok_or_else(|| "--max-items-per-source requires a number".to_owned())?;
-                    args.max_items_per_source = value
-                        .parse::<usize>()
-                        .map_err(|_| "--max-items-per-source must be a positive number")?;
-                    if args.max_items_per_source == 0 {
-                        return Err("--max-items-per-source must be greater than zero".to_owned());
-                    }
-                }
-                "--schedule-interval-ms" => {
-                    let value = values
-                        .next()
-                        .ok_or_else(|| "--schedule-interval-ms requires a number".to_owned())?;
-                    let interval = value
-                        .parse::<u64>()
-                        .map_err(|_| "--schedule-interval-ms must be a positive number")?;
-                    if interval == 0 {
-                        return Err("--schedule-interval-ms must be greater than zero".to_owned());
-                    }
-                    args.schedule_interval_ms = Some(interval);
-                }
-                "--dry-run" => {
-                    args.dry_run = true;
-                }
-                "--source-id" => {
-                    let source_id = values
-                        .next()
-                        .ok_or_else(|| "--source-id requires a source id".to_owned())?;
-                    if source_id.trim().is_empty() {
-                        return Err("--source-id must not be empty".to_owned());
-                    }
-                    args.source_id = Some(source_id);
-                }
-                "--nats-url" => {
-                    let nats_url = values
-                        .next()
-                        .ok_or_else(|| "--nats-url requires a NATS server URL".to_owned())?;
-                    if !nats_url.starts_with("nats://") && !nats_url.starts_with("tls://") {
-                        return Err("--nats-url must start with nats:// or tls://".to_owned());
-                    }
-                    args.nats_url = Some(nats_url);
-                }
-                "--nats-subject" => {
-                    let subject = values
-                        .next()
-                        .ok_or_else(|| "--nats-subject requires a subject".to_owned())?;
-                    if subject.trim().is_empty() || subject.split_whitespace().count() > 1 {
-                        return Err(
-                            "--nats-subject must not be empty or contain whitespace".to_owned()
-                        );
-                    }
-                    args.nats_subject = subject;
-                }
-                "--nats-stream" => {
-                    let stream = values
-                        .next()
-                        .ok_or_else(|| "--nats-stream requires a stream name".to_owned())?;
-                    if stream.trim().is_empty() || stream.split_whitespace().count() > 1 {
-                        return Err(
-                            "--nats-stream must not be empty or contain whitespace".to_owned()
-                        );
-                    }
-                    args.nats_stream = stream;
-                }
-                "--object-store-endpoint" => {
-                    let endpoint = values.next().ok_or_else(|| {
-                        "--object-store-endpoint requires an endpoint URL".to_owned()
-                    })?;
-                    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
-                        return Err(
-                            "--object-store-endpoint must start with http:// or https://"
-                                .to_owned(),
-                        );
-                    }
-                    args.object_store.endpoint = endpoint.trim_end_matches('/').to_owned();
-                }
-                "--object-store-bucket" => {
-                    let bucket = values
-                        .next()
-                        .ok_or_else(|| "--object-store-bucket requires a bucket".to_owned())?;
-                    if bucket.trim().is_empty() {
-                        return Err("--object-store-bucket must not be empty".to_owned());
-                    }
-                    args.object_store.bucket = bucket;
-                }
-                "--object-store-region" => {
-                    let region = values
-                        .next()
-                        .ok_or_else(|| "--object-store-region requires a region".to_owned())?;
-                    if region.trim().is_empty() {
-                        return Err("--object-store-region must not be empty".to_owned());
-                    }
-                    args.object_store.region = region;
-                }
-                "--object-store-force-path-style" => {
-                    let value = values.next().ok_or_else(|| {
-                        "--object-store-force-path-style requires true or false".to_owned()
-                    })?;
-                    args.object_store.force_path_style = parse_bool(
-                        &value,
-                        "--object-store-force-path-style requires true or false",
-                    )?;
-                }
-                "--dedup-lookback-days" => {
-                    let value = values
-                        .next()
-                        .ok_or_else(|| "--dedup-lookback-days requires a number".to_owned())?;
-                    args.dedup_lookback_days = value
-                        .parse::<u16>()
-                        .map_err(|_| "--dedup-lookback-days must be a positive number")?;
-                }
-                "--chunk-max-records" => {
-                    let value = values
-                        .next()
-                        .ok_or_else(|| "--chunk-max-records requires a number".to_owned())?;
-                    args.chunk_max_records = value
-                        .parse::<usize>()
-                        .map_err(|_| "--chunk-max-records must be a positive number")?;
-                    if args.chunk_max_records == 0 {
-                        return Err("--chunk-max-records must be greater than zero".to_owned());
-                    }
-                }
-                "--derivatives-max-events-per-run" => {
-                    args.derivatives_max_events_per_run =
-                        positive_usize_arg(values.next(), "--derivatives-max-events-per-run")?;
-                }
-                "--derivatives-max-events-per-source" => {
-                    args.derivatives_max_events_per_source =
-                        positive_usize_arg(values.next(), "--derivatives-max-events-per-source")?;
-                }
-                "--community-max-events-per-run" => {
-                    args.community_max_events_per_run =
-                        positive_usize_arg(values.next(), "--community-max-events-per-run")?;
-                }
-                "--community-max-events-per-source" => {
-                    args.community_max_events_per_source =
-                        positive_usize_arg(values.next(), "--community-max-events-per-source")?;
-                }
-                "--backfill-start-ms" => {
-                    args.backfill_start_ms =
-                        Some(non_negative_i64_arg(values.next(), "--backfill-start-ms")?);
-                }
-                "--backfill-end-ms" => {
-                    args.backfill_end_ms =
-                        Some(non_negative_i64_arg(values.next(), "--backfill-end-ms")?);
-                }
-                "--help" | "-h" => {
-                    return Err(help());
-                }
-                other => {
-                    return Err(format!("unknown argument: {other}\n\n{}", help()));
-                }
-            }
+            apply_arg(&mut args, arg.as_str(), &mut values)?;
         }
 
-        match (args.backfill_start_ms, args.backfill_end_ms) {
-            (Some(start_ms), Some(end_ms)) if start_ms >= end_ms => {
-                return Err("--backfill-start-ms must be less than --backfill-end-ms".to_owned());
-            }
-            (Some(_), None) => {
-                return Err("--backfill-end-ms is required with --backfill-start-ms".to_owned());
-            }
-            (None, Some(_)) => {
-                return Err("--backfill-start-ms is required with --backfill-end-ms".to_owned());
-            }
-            _ => {}
-        }
-
+        validate_backfill_window(&args)?;
         Ok(args)
+    }
+}
+
+fn default_args() -> Args {
+    Args {
+        source_registry: PathBuf::from(DEFAULT_SOURCE_REGISTRY_PATH),
+        max_items_per_source: 50,
+        schedule_interval_ms: None,
+        dry_run: false,
+        source_id: None,
+        nats_url: None,
+        nats_subject: DEFAULT_NATS_SUBJECT.to_owned(),
+        nats_stream: DEFAULT_NATS_STREAM.to_owned(),
+        object_store: ObjectStoreConfig {
+            endpoint: DEFAULT_OBJECT_STORE_ENDPOINT.to_owned(),
+            bucket: DEFAULT_OBJECT_STORE_BUCKET.to_owned(),
+            region: DEFAULT_OBJECT_STORE_REGION.to_owned(),
+            force_path_style: true,
+        },
+        dedup_lookback_days: DEFAULT_DEDUP_LOOKBACK_DAYS,
+        chunk_max_records: DEFAULT_CHUNK_MAX_RECORDS,
+        derivatives_max_events_per_run: DEFAULT_DERIVATIVES_MAX_EVENTS_PER_RUN,
+        derivatives_max_events_per_source: DEFAULT_DERIVATIVES_MAX_EVENTS_PER_SOURCE,
+        community_max_events_per_run: DEFAULT_COMMUNITY_MAX_EVENTS_PER_RUN,
+        community_max_events_per_source: DEFAULT_COMMUNITY_MAX_EVENTS_PER_SOURCE,
+        backfill_start_ms: None,
+        backfill_end_ms: None,
+    }
+}
+
+fn apply_arg<I>(args: &mut Args, arg: &str, values: &mut I) -> Result<(), String>
+where
+    I: Iterator<Item = String>,
+{
+    match arg {
+        "--source-registry" => parse_source_registry(args, values.next()),
+        "--max-items-per-source" => {
+            args.max_items_per_source =
+                positive_usize_arg(values.next(), "--max-items-per-source")?;
+            Ok(())
+        }
+        "--schedule-interval-ms" => {
+            args.schedule_interval_ms =
+                Some(positive_u64_arg(values.next(), "--schedule-interval-ms")?);
+            Ok(())
+        }
+        "--dry-run" => {
+            args.dry_run = true;
+            Ok(())
+        }
+        "--source-id" => parse_source_id(args, values.next()),
+        "--nats-url" => parse_nats_url(args, values.next()),
+        "--nats-subject" => parse_non_empty_token(
+            &mut args.nats_subject,
+            values.next(),
+            "--nats-subject",
+            "subject",
+        ),
+        "--nats-stream" => parse_non_empty_token(
+            &mut args.nats_stream,
+            values.next(),
+            "--nats-stream",
+            "stream name",
+        ),
+        "--object-store-endpoint" => parse_object_store_endpoint(args, values.next()),
+        "--object-store-bucket" => parse_non_empty_token(
+            &mut args.object_store.bucket,
+            values.next(),
+            "--object-store-bucket",
+            "bucket",
+        ),
+        "--object-store-region" => parse_non_empty_token(
+            &mut args.object_store.region,
+            values.next(),
+            "--object-store-region",
+            "region",
+        ),
+        "--object-store-force-path-style" => {
+            let value = values.next().ok_or_else(|| {
+                "--object-store-force-path-style requires true or false".to_owned()
+            })?;
+            args.object_store.force_path_style = parse_bool(
+                &value,
+                "--object-store-force-path-style requires true or false",
+            )?;
+            Ok(())
+        }
+        "--dedup-lookback-days" => {
+            args.dedup_lookback_days = positive_u16_arg(values.next(), "--dedup-lookback-days")?;
+            Ok(())
+        }
+        "--chunk-max-records" => {
+            args.chunk_max_records = positive_usize_arg(values.next(), "--chunk-max-records")?;
+            Ok(())
+        }
+        "--derivatives-max-events-per-run" => {
+            args.derivatives_max_events_per_run =
+                positive_usize_arg(values.next(), "--derivatives-max-events-per-run")?;
+            Ok(())
+        }
+        "--derivatives-max-events-per-source" => {
+            args.derivatives_max_events_per_source =
+                positive_usize_arg(values.next(), "--derivatives-max-events-per-source")?;
+            Ok(())
+        }
+        "--community-max-events-per-run" => {
+            args.community_max_events_per_run =
+                positive_usize_arg(values.next(), "--community-max-events-per-run")?;
+            Ok(())
+        }
+        "--community-max-events-per-source" => {
+            args.community_max_events_per_source =
+                positive_usize_arg(values.next(), "--community-max-events-per-source")?;
+            Ok(())
+        }
+        "--backfill-start-ms" => {
+            args.backfill_start_ms =
+                Some(non_negative_i64_arg(values.next(), "--backfill-start-ms")?);
+            Ok(())
+        }
+        "--backfill-end-ms" => {
+            args.backfill_end_ms = Some(non_negative_i64_arg(values.next(), "--backfill-end-ms")?);
+            Ok(())
+        }
+        "--help" | "-h" => Err(help()),
+        other => Err(format!("unknown argument: {other}\n\n{}", help())),
+    }
+}
+
+fn parse_source_registry(args: &mut Args, value: Option<String>) -> Result<(), String> {
+    args.source_registry = absolute_path_arg(value, "--source-registry requires an absolute path")?;
+    Ok(())
+}
+
+fn parse_source_id(args: &mut Args, value: Option<String>) -> Result<(), String> {
+    let source_id = non_empty_value(value, "--source-id", "source id")?;
+    args.source_id = Some(source_id);
+    Ok(())
+}
+
+fn parse_nats_url(args: &mut Args, value: Option<String>) -> Result<(), String> {
+    let nats_url = value.ok_or_else(|| "--nats-url requires a NATS server URL".to_owned())?;
+    if !nats_url.starts_with("nats://") && !nats_url.starts_with("tls://") {
+        return Err("--nats-url must start with nats:// or tls://".to_owned());
+    }
+    args.nats_url = Some(nats_url);
+    Ok(())
+}
+
+fn parse_object_store_endpoint(args: &mut Args, value: Option<String>) -> Result<(), String> {
+    let endpoint =
+        value.ok_or_else(|| "--object-store-endpoint requires an endpoint URL".to_owned())?;
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return Err("--object-store-endpoint must start with http:// or https://".to_owned());
+    }
+    args.object_store.endpoint = endpoint.trim_end_matches('/').to_owned();
+    Ok(())
+}
+
+fn parse_non_empty_token(
+    target: &mut String,
+    value: Option<String>,
+    flag: &str,
+    label: &str,
+) -> Result<(), String> {
+    *target = non_empty_value(value, flag, label)?;
+    if target.split_whitespace().count() > 1 {
+        return Err(format!("{flag} must not be empty or contain whitespace"));
+    }
+    Ok(())
+}
+
+fn non_empty_value(value: Option<String>, flag: &str, label: &str) -> Result<String, String> {
+    let value = value.ok_or_else(|| format!("{flag} requires a {label}"))?;
+    if value.trim().is_empty() {
+        return Err(format!("{flag} must not be empty"));
+    }
+    Ok(value)
+}
+
+fn validate_backfill_window(args: &Args) -> Result<(), String> {
+    match (args.backfill_start_ms, args.backfill_end_ms) {
+        (Some(start_ms), Some(end_ms)) if start_ms >= end_ms => {
+            Err("--backfill-start-ms must be less than --backfill-end-ms".to_owned())
+        }
+        (Some(_), None) => Err("--backfill-end-ms is required with --backfill-start-ms".to_owned()),
+        (None, Some(_)) => Err("--backfill-start-ms is required with --backfill-end-ms".to_owned()),
+        _ => Ok(()),
     }
 }
 
@@ -269,6 +261,28 @@ fn positive_usize_arg(value: Option<String>, name: &str) -> Result<usize, String
     let value = value.ok_or_else(|| format!("{name} requires a number"))?;
     let parsed = value
         .parse::<usize>()
+        .map_err(|_| format!("{name} must be a positive number"))?;
+    if parsed == 0 {
+        return Err(format!("{name} must be greater than zero"));
+    }
+    Ok(parsed)
+}
+
+fn positive_u64_arg(value: Option<String>, name: &str) -> Result<u64, String> {
+    let value = value.ok_or_else(|| format!("{name} requires a number"))?;
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| format!("{name} must be a positive number"))?;
+    if parsed == 0 {
+        return Err(format!("{name} must be greater than zero"));
+    }
+    Ok(parsed)
+}
+
+fn positive_u16_arg(value: Option<String>, name: &str) -> Result<u16, String> {
+    let value = value.ok_or_else(|| format!("{name} requires a number"))?;
+    let parsed = value
+        .parse::<u16>()
         .map_err(|_| format!("{name} must be a positive number"))?;
     if parsed == 0 {
         return Err(format!("{name} must be greater than zero"));

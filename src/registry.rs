@@ -91,203 +91,282 @@ impl SourceRegistry {
         if self.sources.is_empty() {
             return Err("source registry sources must not be empty".into());
         }
-        let mut universe_assets = HashSet::new();
-        let mut reference_symbols = HashSet::new();
-        for asset in &self.universe_assets {
-            if asset.asset.trim().is_empty() {
-                return Err("source registry asset must not be empty".into());
-            }
-            if asset.reference_symbol_native.trim().is_empty() {
-                return Err(format!(
-                    "source registry asset {} reference_symbol_native must not be empty",
-                    asset.asset
-                )
-                .into());
-            }
-            if !universe_assets.insert(asset.asset.as_str()) {
-                return Err(format!("duplicate universe asset {}", asset.asset).into());
-            }
-            if !reference_symbols.insert(asset.reference_symbol_native.as_str()) {
-                return Err(format!(
-                    "duplicate reference symbol {}",
-                    asset.reference_symbol_native
-                )
-                .into());
-            }
-        }
-
+        let universe_assets = validate_universe_assets(&self.universe_assets)?;
         let mut source_ids = HashSet::new();
         for source in &self.sources {
-            if source.source_id.trim().is_empty() {
-                return Err("source source_id must not be empty".into());
-            }
-            if !source_ids.insert(source.source_id.as_str()) {
-                return Err(format!("duplicate source_id {}", source.source_id).into());
-            }
-            if !matches!(
-                source.source_category.as_str(),
-                "news"
-                    | "exchange_notice"
-                    | "funding"
-                    | "project_notice"
-                    | "social"
-                    | "governance"
-                    | "developer_activity"
-            ) {
-                return Err(format!(
-                    "source {} unsupported source_category {}",
-                    source.source_id, source.source_category
-                )
-                .into());
-            }
-            if !matches!(source.trust_tier.as_str(), "T0" | "T1" | "T2") {
-                return Err(format!(
-                    "source {} unsupported trust_tier {}",
-                    source.source_id, source.trust_tier
-                )
-                .into());
-            }
-            if !matches!(source.cadence_tier.as_str(), "high" | "medium" | "low") {
-                return Err(format!(
-                    "source {} unsupported cadence_tier {}",
-                    source.source_id, source.cadence_tier
-                )
-                .into());
-            }
-            if !matches!(
-                source.top50_relevance_mode.as_str(),
-                "symbol_alias_match" | "direct_asset"
-            ) {
-                return Err(format!(
-                    "source {} unsupported top50_relevance_mode {}",
-                    source.source_id, source.top50_relevance_mode
-                )
-                .into());
-            }
-            if let Some(source_state) = &source.source_state {
-                if !matches!(
-                    source_state.as_str(),
-                    "enabled" | "available_disabled" | "blocked" | "unsupported"
-                ) {
-                    return Err(format!(
-                        "source {} unsupported source_state {}",
-                        source.source_id, source_state
-                    )
-                    .into());
-                }
-                if source.enabled && source_state != "enabled" {
-                    return Err(format!(
-                        "source {} enabled=true requires source_state enabled",
-                        source.source_id
-                    )
-                    .into());
-                }
-                if !source.enabled && source_state == "enabled" {
-                    return Err(format!(
-                        "source {} source_state enabled conflicts with enabled=false",
-                        source.source_id
-                    )
-                    .into());
-                }
-                if !source.enabled
-                    && source_state != "enabled"
-                    && source
-                        .activation_blocker
-                        .as_deref()
-                        .unwrap_or("")
-                        .trim()
-                        .is_empty()
-                {
-                    return Err(format!(
-                        "source {} disabled inventory source requires activation_blocker",
-                        source.source_id
-                    )
-                    .into());
-                }
-            }
-            if source.enabled
-                && !matches!(
-                    source.fetch_method.as_str(),
-                    "rss" | "rest_api" | "html_crawl"
-                )
-            {
-                return Err(format!(
-                    "enabled source {} uses unsupported fetch_method {}",
-                    source.source_id, source.fetch_method
-                )
-                .into());
-            }
-            if source.fetch_method == "rest_api"
-                && source.adapter.as_deref().unwrap_or("").trim().is_empty()
-            {
-                return Err(
-                    format!("rest_api source {} must define adapter", source.source_id).into(),
-                );
-            }
-            if let Some(max_items_per_run) = source.max_items_per_run
-                && max_items_per_run == 0
-            {
-                return Err(format!(
-                    "source {} max_items_per_run must be greater than zero",
-                    source.source_id
-                )
-                .into());
-            }
-            if !source.source_url.starts_with("https://") {
-                return Err(
-                    format!("source {} source_url must use https", source.source_id).into(),
-                );
-            }
-            if let AppliesToAssets::All(value) = &source.applies_to_assets
-                && value != "all_major_50"
-            {
-                return Err(format!(
-                    "source {} unsupported applies_to_assets value {}",
-                    source.source_id, value
-                )
-                .into());
-            }
-            match &source.applies_to_assets {
-                AppliesToAssets::All(_) => {
-                    if source.top50_relevance_mode != "symbol_alias_match" {
-                        return Err(format!(
-                            "source {} all_major_50 requires symbol_alias_match",
-                            source.source_id
-                        )
-                        .into());
-                    }
-                }
-                AppliesToAssets::List(values) => {
-                    if values.is_empty() {
-                        return Err(format!(
-                            "source {} applies_to_assets list must not be empty",
-                            source.source_id
-                        )
-                        .into());
-                    }
-                    if source.top50_relevance_mode != "direct_asset" {
-                        return Err(format!(
-                            "source {} asset list requires direct_asset relevance mode",
-                            source.source_id
-                        )
-                        .into());
-                    }
-                    if source.enabled {
-                        for asset in values {
-                            if !universe_assets.contains(asset.as_str()) {
-                                return Err(format!(
-                                    "enabled source {} applies to non-universe asset {}",
-                                    source.source_id, asset
-                                )
-                                .into());
-                            }
-                        }
-                    }
-                }
-            }
+            validate_source_id(source, &mut source_ids)?;
+            validate_source_contract(source, &universe_assets)?;
         }
         Ok(())
     }
+}
+
+fn validate_universe_assets(assets: &[UniverseAsset]) -> Result<HashSet<&str>, Box<dyn Error>> {
+    let mut universe_assets = HashSet::new();
+    let mut reference_symbols = HashSet::new();
+    for asset in assets {
+        validate_universe_asset(asset, &mut universe_assets, &mut reference_symbols)?;
+    }
+    Ok(universe_assets)
+}
+
+fn validate_universe_asset<'a>(
+    asset: &'a UniverseAsset,
+    universe_assets: &mut HashSet<&'a str>,
+    reference_symbols: &mut HashSet<&'a str>,
+) -> Result<(), Box<dyn Error>> {
+    if asset.asset.trim().is_empty() {
+        return Err("source registry asset must not be empty".into());
+    }
+    if asset.reference_symbol_native.trim().is_empty() {
+        return Err(format!(
+            "source registry asset {} reference_symbol_native must not be empty",
+            asset.asset
+        )
+        .into());
+    }
+    if !universe_assets.insert(asset.asset.as_str()) {
+        return Err(format!("duplicate universe asset {}", asset.asset).into());
+    }
+    if !reference_symbols.insert(asset.reference_symbol_native.as_str()) {
+        return Err(format!(
+            "duplicate reference symbol {}",
+            asset.reference_symbol_native
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_source_id<'a>(
+    source: &'a Source,
+    source_ids: &mut HashSet<&'a str>,
+) -> Result<(), Box<dyn Error>> {
+    if source.source_id.trim().is_empty() {
+        return Err("source source_id must not be empty".into());
+    }
+    if !source_ids.insert(source.source_id.as_str()) {
+        return Err(format!("duplicate source_id {}", source.source_id).into());
+    }
+    Ok(())
+}
+
+fn validate_source_contract(
+    source: &Source,
+    universe_assets: &HashSet<&str>,
+) -> Result<(), Box<dyn Error>> {
+    validate_source_enums(source)?;
+    validate_source_state(source)?;
+    validate_fetch_contract(source)?;
+    validate_applies_to_assets(source, universe_assets)
+}
+
+fn validate_source_enums(source: &Source) -> Result<(), Box<dyn Error>> {
+    validate_allowed_value(
+        source,
+        "source_category",
+        &source.source_category,
+        &[
+            "news",
+            "exchange_notice",
+            "funding",
+            "project_notice",
+            "social",
+            "governance",
+            "developer_activity",
+        ],
+    )?;
+    validate_allowed_value(
+        source,
+        "trust_tier",
+        &source.trust_tier,
+        &["T0", "T1", "T2"],
+    )?;
+    validate_allowed_value(
+        source,
+        "cadence_tier",
+        &source.cadence_tier,
+        &["high", "medium", "low"],
+    )?;
+    validate_allowed_value(
+        source,
+        "top50_relevance_mode",
+        &source.top50_relevance_mode,
+        &["symbol_alias_match", "direct_asset"],
+    )
+}
+
+fn validate_allowed_value(
+    source: &Source,
+    field_name: &str,
+    value: &str,
+    allowed: &[&str],
+) -> Result<(), Box<dyn Error>> {
+    if allowed.contains(&value) {
+        return Ok(());
+    }
+    Err(format!(
+        "source {} unsupported {} {}",
+        source.source_id, field_name, value
+    )
+    .into())
+}
+
+fn validate_source_state(source: &Source) -> Result<(), Box<dyn Error>> {
+    let Some(source_state) = source.source_state.as_deref() else {
+        return Ok(());
+    };
+    validate_allowed_value(
+        source,
+        "source_state",
+        source_state,
+        &["enabled", "available_disabled", "blocked", "unsupported"],
+    )?;
+    validate_enabled_state_alignment(source, source_state)?;
+    validate_activation_blocker(source, source_state)
+}
+
+fn validate_enabled_state_alignment(
+    source: &Source,
+    source_state: &str,
+) -> Result<(), Box<dyn Error>> {
+    if source.enabled && source_state != "enabled" {
+        return Err(format!(
+            "source {} enabled=true requires source_state enabled",
+            source.source_id
+        )
+        .into());
+    }
+    if !source.enabled && source_state == "enabled" {
+        return Err(format!(
+            "source {} source_state enabled conflicts with enabled=false",
+            source.source_id
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_activation_blocker(source: &Source, source_state: &str) -> Result<(), Box<dyn Error>> {
+    let has_blocker = !source
+        .activation_blocker
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty();
+    if !source.enabled && source_state != "enabled" && !has_blocker {
+        return Err(format!(
+            "source {} disabled inventory source requires activation_blocker",
+            source.source_id
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_fetch_contract(source: &Source) -> Result<(), Box<dyn Error>> {
+    if source.enabled
+        && !matches!(
+            source.fetch_method.as_str(),
+            "rss" | "rest_api" | "html_crawl"
+        )
+    {
+        return Err(format!(
+            "enabled source {} uses unsupported fetch_method {}",
+            source.source_id, source.fetch_method
+        )
+        .into());
+    }
+    if source.fetch_method == "rest_api"
+        && source.adapter.as_deref().unwrap_or("").trim().is_empty()
+    {
+        return Err(format!("rest_api source {} must define adapter", source.source_id).into());
+    }
+    if let Some(max_items_per_run) = source.max_items_per_run
+        && max_items_per_run == 0
+    {
+        return Err(format!(
+            "source {} max_items_per_run must be greater than zero",
+            source.source_id
+        )
+        .into());
+    }
+    if !source.source_url.starts_with("https://") {
+        return Err(format!("source {} source_url must use https", source.source_id).into());
+    }
+    Ok(())
+}
+
+fn validate_applies_to_assets(
+    source: &Source,
+    universe_assets: &HashSet<&str>,
+) -> Result<(), Box<dyn Error>> {
+    match &source.applies_to_assets {
+        AppliesToAssets::All(value) => validate_all_assets_source(source, value),
+        AppliesToAssets::List(values) => {
+            validate_asset_list_source(source, values, universe_assets)
+        }
+    }
+}
+
+fn validate_all_assets_source(source: &Source, value: &str) -> Result<(), Box<dyn Error>> {
+    if value != "all_major_50" {
+        return Err(format!(
+            "source {} unsupported applies_to_assets value {}",
+            source.source_id, value
+        )
+        .into());
+    }
+    if source.top50_relevance_mode != "symbol_alias_match" {
+        return Err(format!(
+            "source {} all_major_50 requires symbol_alias_match",
+            source.source_id
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_asset_list_source(
+    source: &Source,
+    values: &[String],
+    universe_assets: &HashSet<&str>,
+) -> Result<(), Box<dyn Error>> {
+    if values.is_empty() {
+        return Err(format!(
+            "source {} applies_to_assets list must not be empty",
+            source.source_id
+        )
+        .into());
+    }
+    if source.top50_relevance_mode != "direct_asset" {
+        return Err(format!(
+            "source {} asset list requires direct_asset relevance mode",
+            source.source_id
+        )
+        .into());
+    }
+    validate_enabled_asset_membership(source, values, universe_assets)
+}
+
+fn validate_enabled_asset_membership(
+    source: &Source,
+    values: &[String],
+    universe_assets: &HashSet<&str>,
+) -> Result<(), Box<dyn Error>> {
+    if !source.enabled {
+        return Ok(());
+    }
+    for asset in values {
+        if !universe_assets.contains(asset.as_str()) {
+            return Err(format!(
+                "enabled source {} applies to non-universe asset {}",
+                source.source_id, asset
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 impl Source {

@@ -111,6 +111,99 @@ publish-outbox/status=pending/schema=raw_intel_event_created_v2/dt=YYYY-MM-DD/ho
 manifests/schema=intel_l0_manifest_v1/dt=YYYY-MM-DD/hour=HH/run_id=....json
 ```
 
+AWS dev deployment:
+
+```text
+Account: 791444962214
+Region: ap-northeast-2
+Profile: AdministratorAccess-791444962214
+ECR repository: ecr-nangman-dev-intel-crawl-apn2
+ECS cluster: ecs-nangman-dev-invest-apn2
+ECS service: svc-nangman-dev-intel-crawl
+ECS task definition: td-nangman-dev-intel-crawl
+ECS container: intel-crawl
+CloudWatch log group: /ecs/nangman/dev/intel-crawl
+S3 L0 bucket: nangman-crypto-dev-intel-crawl-l0-962214
+IAM execution role: role-nangman-dev-intel-crawl-exec
+IAM task role: role-nangman-dev-intel-crawl-task
+```
+
+The AWS dev worker uses AWS S3 as the L0 object store:
+
+```bash
+cd /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
+
+docker buildx build \
+  --platform linux/arm64 \
+  --provenance=false \
+  --sbom=false \
+  -t 791444962214.dkr.ecr.ap-northeast-2.amazonaws.com/ecr-nangman-dev-intel-crawl-apn2:git-$(git rev-parse --short=12 HEAD)-arm64-single \
+  --push \
+  /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
+```
+
+The ECS task command is intentionally S3-first and does not enable NATS until a
+reachable shared NATS endpoint is explicitly wired:
+
+```text
+--object-store-endpoint https://s3.ap-northeast-2.amazonaws.com
+--object-store-bucket nangman-crypto-dev-intel-crawl-l0-962214
+--object-store-region ap-northeast-2
+--object-store-force-path-style false
+--schedule-interval-ms 900000
+--max-items-per-source 20
+```
+
+Operate and verify the AWS worker with separate checks instead of treating
+`RUNNING` as healthy:
+
+```bash
+aws ecs describe-services \
+  --cluster ecs-nangman-dev-invest-apn2 \
+  --services svc-nangman-dev-intel-crawl \
+  --profile AdministratorAccess-791444962214 \
+  --region ap-northeast-2
+
+aws ecs list-tasks \
+  --cluster ecs-nangman-dev-invest-apn2 \
+  --service-name svc-nangman-dev-intel-crawl \
+  --profile AdministratorAccess-791444962214 \
+  --region ap-northeast-2
+
+aws logs describe-log-streams \
+  --log-group-name /ecs/nangman/dev/intel-crawl \
+  --order-by LastEventTime \
+  --descending \
+  --max-items 5 \
+  --profile AdministratorAccess-791444962214 \
+  --region ap-northeast-2
+
+aws s3api list-objects-v2 \
+  --bucket nangman-crypto-dev-intel-crawl-l0-962214 \
+  --prefix manifests/schema=intel_l0_manifest_v1/ \
+  --profile AdministratorAccess-791444962214 \
+  --region ap-northeast-2
+
+aws logs filter-log-events \
+  --log-group-name /ecs/nangman/dev/intel-crawl \
+  --filter-pattern 'panic ?ERROR ?OutOfMemory ?SIGKILL ?Killed ?AccessDenied' \
+  --profile AdministratorAccess-791444962214 \
+  --region ap-northeast-2
+```
+
+Current dev deployment notes:
+
+```text
+GitHub Actions: Quality Checks and SonarQube Scan passed for commit
+b7e885541ad556a951217fe33197da152dbd6ff3 after org-level SONAR_TOKEN and
+SONAR_HOST_URL were available to the workflow.
+
+ECR scan: the debian:bookworm-slim runtime image currently reports package-level
+CRITICAL/HIGH findings in gnutls28/libgcrypt20. Treat the deployed image as a
+functional smoke, not a security-clean runtime, until the runtime base is moved
+to a minimal/distroless image and the scan is rechecked.
+```
+
 Before writing a new event, the worker loads recent RustFS `dedup-index`
 chunks. Repeated runs skip already-written events and only publish NATS pointers
 for newly stored events.

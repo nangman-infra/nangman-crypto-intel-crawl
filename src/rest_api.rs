@@ -256,52 +256,32 @@ async fn fetch_binance_usdm_funding_rate_history(
     for asset in prioritized_derivatives_assets(assets) {
         let mut cursor_ms = backfill_start_ms;
         while cursor_ms < backfill_end_ms && items.len() < max_items {
-            let request_limit = (max_items - items.len()).min(1000).to_string();
-            let url = binance_funding_rate_history_url(
-                &source.source_url,
+            let request_limit = (max_items - items.len()).min(1000);
+            let page = fetch_funding_history_page(
+                client,
+                source,
                 &asset.reference_symbol_native,
                 cursor_ms,
                 backfill_end_ms,
-                &request_limit,
+                request_limit,
+            )
+            .await;
+            let Ok(page) = page else {
+                failed_requests += 1;
+                break;
+            };
+            if page.records.is_empty() {
+                break;
+            }
+            let last_funding_time = append_funding_history_records(
+                &mut items,
+                max_items,
+                backfill_start_ms,
+                backfill_end_ms,
+                &page,
+                cursor_ms,
             );
-            let Ok(response) = client
-                .get(&url)
-                .header("Accept", "application/json")
-                .send()
-                .await
-            else {
-                failed_requests += 1;
-                break;
-            };
-            if !response.status().is_success() {
-                failed_requests += 1;
-                break;
-            }
-            let Ok(records) = response.json::<Vec<BinanceFundingRate>>().await else {
-                failed_requests += 1;
-                break;
-            };
-            if records.is_empty() {
-                break;
-            }
-            let mut last_funding_time = cursor_ms;
-            for record in &records {
-                last_funding_time = last_funding_time.max(record.funding_time);
-                if record.funding_time < backfill_start_ms || record.funding_time > backfill_end_ms
-                {
-                    continue;
-                }
-                items.push(binance_funding_rate_history_item(
-                    record,
-                    &url,
-                    backfill_start_ms,
-                    backfill_end_ms,
-                ));
-                if items.len() >= max_items {
-                    break;
-                }
-            }
-            if records.len() < request_limit.parse::<usize>().unwrap_or(1000) {
+            if page.records.len() < request_limit {
                 break;
             }
             let next_cursor = last_funding_time.saturating_add(1);
@@ -322,6 +302,76 @@ async fn fetch_binance_usdm_funding_rate_history(
         .into());
     }
     Ok(items)
+}
+
+struct FundingHistoryPage {
+    url: String,
+    records: Vec<BinanceFundingRate>,
+}
+
+async fn fetch_funding_history_page(
+    client: &reqwest::Client,
+    source: &Source,
+    symbol: &str,
+    cursor_ms: i64,
+    backfill_end_ms: i64,
+    request_limit: usize,
+) -> Result<FundingHistoryPage, Box<dyn Error>> {
+    let request_limit = request_limit.to_string();
+    let url = binance_funding_rate_history_url(
+        &source.source_url,
+        symbol,
+        cursor_ms,
+        backfill_end_ms,
+        &request_limit,
+    );
+    let response = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(format!("{} returned HTTP {}", source.source_id, response.status()).into());
+    }
+    Ok(FundingHistoryPage {
+        url,
+        records: response.json::<Vec<BinanceFundingRate>>().await?,
+    })
+}
+
+fn append_funding_history_records(
+    items: &mut Vec<FeedItem>,
+    max_items: usize,
+    backfill_start_ms: i64,
+    backfill_end_ms: i64,
+    page: &FundingHistoryPage,
+    cursor_ms: i64,
+) -> i64 {
+    let mut last_funding_time = cursor_ms;
+    for record in &page.records {
+        last_funding_time = last_funding_time.max(record.funding_time);
+        if !record_in_backfill_window(record, backfill_start_ms, backfill_end_ms) {
+            continue;
+        }
+        items.push(binance_funding_rate_history_item(
+            record,
+            &page.url,
+            backfill_start_ms,
+            backfill_end_ms,
+        ));
+        if items.len() >= max_items {
+            break;
+        }
+    }
+    last_funding_time
+}
+
+fn record_in_backfill_window(
+    record: &BinanceFundingRate,
+    backfill_start_ms: i64,
+    backfill_end_ms: i64,
+) -> bool {
+    record.funding_time >= backfill_start_ms && record.funding_time <= backfill_end_ms
 }
 
 fn binance_funding_rate_item(record: &BinanceFundingRate, url: &str) -> FeedItem {

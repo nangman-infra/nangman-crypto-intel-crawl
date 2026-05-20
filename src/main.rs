@@ -120,184 +120,383 @@ async fn crawl_once(
     };
     let sources = registry.enabled_sources(args.source_id.as_deref());
     let mut summary = CrawlSummary::new(sources.len(), args.dry_run, publisher.is_enabled());
-    let mut raw_events = Vec::new();
-    let mut health_records = Vec::new();
-    let mut heal_records = Vec::new();
-    let mut balance_records = Vec::new();
-    let mut balance_tracker = SourceBalanceTracker::default();
+    let mut buffers = CrawlBuffers::new(outputs.dedup);
+    let context = CrawlContext {
+        args,
+        registry,
+        matcher,
+        client,
+        balance_policy,
+    };
 
     for source in sources {
-        let checked_at_ms = Utc::now().timestamp_millis();
-        let mut source_stats = SourceRunStats::default();
-        match fetch_source_items(
-            client,
-            registry,
-            source,
-            args.max_items_per_source,
-            balance_policy,
-            args.backfill_start_ms,
-            args.backfill_end_ms,
-        )
-        .await
-        {
-            Ok(items) => {
-                let fetched_at_ms = Utc::now().timestamp_millis();
-                let source_items_seen = items.len();
-                source_stats.items_seen = source_items_seen;
-                summary.sources_ok += 1;
-                summary.items_seen += source_items_seen;
-                let mut source_events_written = 0;
-                let mut source_duplicates_skipped = 0;
-                for item in items {
-                    let matched_assets = matcher.match_item(&item.title, &item.body, &item.url);
-                    let event =
-                        build_raw_intel_event(source, &item, &matched_assets, fetched_at_ms);
-                    if !args.dry_run && !outputs.dedup.is_new(event.dedup_key()) {
-                        summary.events_skipped_duplicate += 1;
-                        source_duplicates_skipped += 1;
-                        source_stats.duplicates_skipped += 1;
-                        continue;
-                    }
-                    source_stats.candidates_after_dedup += 1;
-                    match balance_tracker.admit(source, balance_policy) {
-                        Admission::Admit => {}
-                        Admission::Suppress { reason } => {
-                            summary.events_suppressed_by_balance += 1;
-                            source_stats.record_suppression(reason);
-                            continue;
-                        }
-                    }
-                    source_events_written += usize::from(!args.dry_run);
-                    source_stats.events_emitted += 1;
-                    raw_events.push(event);
-                }
-                let health = SourceHealthRecord::ok(
-                    source,
-                    checked_at_ms,
-                    Utc::now().timestamp_millis(),
-                    source_items_seen,
-                    source_events_written,
-                    source_duplicates_skipped,
-                );
-                health_records.push(health);
-                balance_records.push(SourceBalanceRecord::new(
-                    source,
-                    source_stats,
-                    balance_policy,
-                    Utc::now().timestamp_millis(),
-                ));
-                summary.source_health_written += usize::from(!args.dry_run);
-            }
-            Err(error) => {
-                let error = error.to_string();
-                let observed_at_ms = Utc::now().timestamp_millis();
-                summary.sources_failed += 1;
-                summary.failures.push(SourceFailure {
-                    source_id: source.source_id.clone(),
-                    error: error.clone(),
-                });
-                let health = SourceHealthRecord::failed(
-                    source,
-                    checked_at_ms,
-                    observed_at_ms,
-                    error.clone(),
-                );
-                health_records.push(health);
-                balance_records.push(SourceBalanceRecord::new(
-                    source,
-                    source_stats,
-                    balance_policy,
-                    observed_at_ms,
-                ));
-                summary.source_health_written += usize::from(!args.dry_run);
-                let heal = SourceHealRecord::retry_after_failure(
-                    source,
-                    observed_at_ms,
-                    &error,
-                    args.schedule_interval_ms,
-                );
-                heal_records.push(heal);
-                summary.source_heal_written += usize::from(!args.dry_run);
-            }
-        }
+        crawl_source(&context, source, &mut buffers, &mut summary).await?;
     }
 
     if let Some(storage) = storage {
-        let mut uploaded_objects = Vec::new();
-        let (stored_events, raw_uploaded) = storage.write_raw_events(&raw_events).await?;
-        summary.events_written = stored_events.len();
-        uploaded_objects.extend(raw_uploaded);
-
-        let observed_at_ms = Utc::now().timestamp_millis();
-        if let Some(object) = storage
-            .write_source_health(&health_records, observed_at_ms)
-            .await?
-        {
-            uploaded_objects.push(object);
-        }
-        if let Some(object) = storage
-            .write_source_heal(&heal_records, observed_at_ms)
-            .await?
-        {
-            uploaded_objects.push(object);
-        }
-        let coverage_records = build_source_coverage_report(registry, observed_at_ms);
-        if let Some(object) = storage
-            .write_source_coverage(&coverage_records, observed_at_ms)
-            .await?
-        {
-            summary.source_coverage_written += 1;
-            summary.source_coverage_key = Some(object_key(&object));
-            uploaded_objects.push(object);
-        }
-        if let Some(object) = storage
-            .write_source_balance(&balance_records, observed_at_ms)
-            .await?
-        {
-            summary.source_balance_written += 1;
-            summary.source_balance_key = Some(object_key(&object));
-            uploaded_objects.push(object);
-        }
-        let PublishOutcome {
-            dedup_events,
-            publish_error,
-            uploaded_objects: publish_uploaded_objects,
-        } = publish_stored_events(storage, publisher, &stored_events, &mut summary).await?;
-        uploaded_objects.extend(publish_uploaded_objects);
-        if let Some(object) = storage
-            .write_dedup_index(&dedup_events, observed_at_ms)
-            .await?
-        {
-            uploaded_objects.push(object);
-        }
-        let object = storage
-            .write_manifest(ManifestInput {
-                status: if publish_error.is_none() {
-                    "success"
-                } else {
-                    "publish_failed"
-                }
-                .to_owned(),
-                started_at_ms,
-                finished_at_ms: Utc::now().timestamp_millis(),
-                uploaded_objects,
-                raw_event_count: stored_events.len(),
-                pointer_published_count: summary.events_published,
-                pointer_pending_count: summary.pointer_publish_pending,
-            })
-            .await?;
-        summary.manifest_written = 1;
-        summary.manifest_key = Some(object_key(&object));
-        if let Some(error) = publish_error {
-            return Err(format!("NATS publish failed after RustFS upload: {error}").into());
-        }
+        write_storage_outputs(
+            storage,
+            publisher,
+            registry,
+            buffers,
+            started_at_ms,
+            &mut summary,
+        )
+        .await?;
     }
 
     Ok(summary)
 }
 
+async fn crawl_source(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    buffers: &mut CrawlBuffers<'_>,
+    summary: &mut CrawlSummary,
+) -> Result<(), Box<dyn Error>> {
+    let checked_at_ms = Utc::now().timestamp_millis();
+    let mut source_stats = SourceRunStats::default();
+    let result = fetch_source_items(
+        context.client,
+        context.registry,
+        source,
+        context.args.max_items_per_source,
+        context.balance_policy,
+        context.args.backfill_start_ms,
+        context.args.backfill_end_ms,
+    )
+    .await;
+
+    match result {
+        Ok(items) => record_source_items(
+            context,
+            source,
+            checked_at_ms,
+            items,
+            &mut source_stats,
+            buffers,
+            summary,
+        ),
+        Err(error) => record_source_failure(
+            context,
+            source,
+            checked_at_ms,
+            error,
+            source_stats,
+            buffers,
+            summary,
+        ),
+    }
+    Ok(())
+}
+
+fn record_source_items(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    checked_at_ms: i64,
+    items: Vec<FeedItem>,
+    source_stats: &mut SourceRunStats,
+    buffers: &mut CrawlBuffers<'_>,
+    summary: &mut CrawlSummary,
+) {
+    let fetched_at_ms = Utc::now().timestamp_millis();
+    let source_items_seen = items.len();
+    source_stats.items_seen = source_items_seen;
+    summary.sources_ok += 1;
+    summary.items_seen += source_items_seen;
+    let source_outcome = append_source_events(
+        context,
+        source,
+        items,
+        fetched_at_ms,
+        source_stats,
+        buffers,
+        summary,
+    );
+    buffers.health_records.push(SourceHealthRecord::ok(
+        source,
+        checked_at_ms,
+        Utc::now().timestamp_millis(),
+        source_items_seen,
+        source_outcome.events_written,
+        source_outcome.duplicates_skipped,
+    ));
+    buffers.balance_records.push(SourceBalanceRecord::new(
+        source,
+        source_stats.clone(),
+        context.balance_policy,
+        Utc::now().timestamp_millis(),
+    ));
+    summary.source_health_written += usize::from(!context.args.dry_run);
+}
+
+fn append_source_events(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    items: Vec<FeedItem>,
+    fetched_at_ms: i64,
+    source_stats: &mut SourceRunStats,
+    buffers: &mut CrawlBuffers<'_>,
+    summary: &mut CrawlSummary,
+) -> SourceOutcome {
+    let mut outcome = SourceOutcome::default();
+    for item in items {
+        let matched_assets = context
+            .matcher
+            .match_item(&item.title, &item.body, &item.url);
+        let event = build_raw_intel_event(source, &item, &matched_assets, fetched_at_ms);
+        if is_duplicate_event(context.args, buffers, event.dedup_key()) {
+            summary.events_skipped_duplicate += 1;
+            outcome.duplicates_skipped += 1;
+            source_stats.duplicates_skipped += 1;
+            continue;
+        }
+        source_stats.candidates_after_dedup += 1;
+        if suppress_by_balance(
+            source,
+            context.balance_policy,
+            buffers,
+            source_stats,
+            summary,
+        ) {
+            continue;
+        }
+        outcome.events_written += usize::from(!context.args.dry_run);
+        source_stats.events_emitted += 1;
+        buffers.raw_events.push(event);
+    }
+    outcome
+}
+
+fn is_duplicate_event(args: &Args, buffers: &mut CrawlBuffers<'_>, dedup_key: &str) -> bool {
+    !args.dry_run && !buffers.dedup.is_new(dedup_key)
+}
+
+fn suppress_by_balance(
+    source: &Source,
+    balance_policy: SourceBalancePolicy,
+    buffers: &mut CrawlBuffers<'_>,
+    source_stats: &mut SourceRunStats,
+    summary: &mut CrawlSummary,
+) -> bool {
+    match buffers.balance_tracker.admit(source, balance_policy) {
+        Admission::Admit => false,
+        Admission::Suppress { reason } => {
+            summary.events_suppressed_by_balance += 1;
+            source_stats.record_suppression(reason);
+            true
+        }
+    }
+}
+
+fn record_source_failure(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    checked_at_ms: i64,
+    error: Box<dyn Error>,
+    source_stats: SourceRunStats,
+    buffers: &mut CrawlBuffers<'_>,
+    summary: &mut CrawlSummary,
+) {
+    let error = error.to_string();
+    let observed_at_ms = Utc::now().timestamp_millis();
+    summary.sources_failed += 1;
+    summary.failures.push(SourceFailure {
+        source_id: source.source_id.clone(),
+        error: error.clone(),
+    });
+    buffers.health_records.push(SourceHealthRecord::failed(
+        source,
+        checked_at_ms,
+        observed_at_ms,
+        error.clone(),
+    ));
+    buffers.balance_records.push(SourceBalanceRecord::new(
+        source,
+        source_stats,
+        context.balance_policy,
+        observed_at_ms,
+    ));
+    summary.source_health_written += usize::from(!context.args.dry_run);
+    buffers
+        .heal_records
+        .push(SourceHealRecord::retry_after_failure(
+            source,
+            observed_at_ms,
+            &error,
+            context.args.schedule_interval_ms,
+        ));
+    summary.source_heal_written += usize::from(!context.args.dry_run);
+}
+
+async fn write_storage_outputs(
+    storage: &IntelL0Storage,
+    publisher: &EventPublisher,
+    registry: &SourceRegistry,
+    buffers: CrawlBuffers<'_>,
+    started_at_ms: i64,
+    summary: &mut CrawlSummary,
+) -> Result<(), Box<dyn Error>> {
+    let mut uploaded_objects = Vec::new();
+    let (stored_events, raw_uploaded) = storage.write_raw_events(&buffers.raw_events).await?;
+    summary.events_written = stored_events.len();
+    uploaded_objects.extend(raw_uploaded);
+
+    let observed_at_ms = Utc::now().timestamp_millis();
+    write_diagnostic_objects(
+        storage,
+        registry,
+        &buffers,
+        observed_at_ms,
+        summary,
+        &mut uploaded_objects,
+    )
+    .await?;
+    let PublishOutcome {
+        dedup_events,
+        publish_error,
+        uploaded_objects: publish_uploaded_objects,
+    } = publish_stored_events(storage, publisher, &stored_events, summary).await?;
+    uploaded_objects.extend(publish_uploaded_objects);
+    if let Some(object) = storage
+        .write_dedup_index(&dedup_events, observed_at_ms)
+        .await?
+    {
+        uploaded_objects.push(object);
+    }
+    write_manifest(
+        storage,
+        started_at_ms,
+        stored_events.len(),
+        publish_error,
+        uploaded_objects,
+        summary,
+    )
+    .await
+}
+
+async fn write_diagnostic_objects(
+    storage: &IntelL0Storage,
+    registry: &SourceRegistry,
+    buffers: &CrawlBuffers<'_>,
+    observed_at_ms: i64,
+    summary: &mut CrawlSummary,
+    uploaded_objects: &mut Vec<UploadedObject>,
+) -> Result<(), Box<dyn Error>> {
+    push_optional_object(
+        uploaded_objects,
+        storage
+            .write_source_health(&buffers.health_records, observed_at_ms)
+            .await?,
+    );
+    push_optional_object(
+        uploaded_objects,
+        storage
+            .write_source_heal(&buffers.heal_records, observed_at_ms)
+            .await?,
+    );
+    let coverage_records = build_source_coverage_report(registry, observed_at_ms);
+    if let Some(object) = storage
+        .write_source_coverage(&coverage_records, observed_at_ms)
+        .await?
+    {
+        summary.source_coverage_written += 1;
+        summary.source_coverage_key = Some(object_key(&object));
+        uploaded_objects.push(object);
+    }
+    if let Some(object) = storage
+        .write_source_balance(&buffers.balance_records, observed_at_ms)
+        .await?
+    {
+        summary.source_balance_written += 1;
+        summary.source_balance_key = Some(object_key(&object));
+        uploaded_objects.push(object);
+    }
+    Ok(())
+}
+
+fn push_optional_object(
+    uploaded_objects: &mut Vec<UploadedObject>,
+    object: Option<UploadedObject>,
+) {
+    if let Some(object) = object {
+        uploaded_objects.push(object);
+    }
+}
+
+async fn write_manifest(
+    storage: &IntelL0Storage,
+    started_at_ms: i64,
+    raw_event_count: usize,
+    publish_error: Option<String>,
+    uploaded_objects: Vec<UploadedObject>,
+    summary: &mut CrawlSummary,
+) -> Result<(), Box<dyn Error>> {
+    let object = storage
+        .write_manifest(ManifestInput {
+            status: manifest_status(&publish_error).to_owned(),
+            started_at_ms,
+            finished_at_ms: Utc::now().timestamp_millis(),
+            uploaded_objects,
+            raw_event_count,
+            pointer_published_count: summary.events_published,
+            pointer_pending_count: summary.pointer_publish_pending,
+        })
+        .await?;
+    summary.manifest_written = 1;
+    summary.manifest_key = Some(object_key(&object));
+    if let Some(error) = publish_error {
+        return Err(format!("NATS publish failed after RustFS upload: {error}").into());
+    }
+    Ok(())
+}
+
+fn manifest_status(publish_error: &Option<String>) -> &'static str {
+    if publish_error.is_none() {
+        "success"
+    } else {
+        "publish_failed"
+    }
+}
+
 struct CrawlOutputs<'a> {
     dedup: &'a mut DedupStore,
+}
+
+struct CrawlContext<'a> {
+    args: &'a Args,
+    registry: &'a SourceRegistry,
+    matcher: &'a SymbolMatcher,
+    client: &'a reqwest::Client,
+    balance_policy: SourceBalancePolicy,
+}
+
+struct CrawlBuffers<'a> {
+    dedup: &'a mut DedupStore,
+    raw_events: Vec<RawIntelEvent>,
+    health_records: Vec<SourceHealthRecord>,
+    heal_records: Vec<SourceHealRecord>,
+    balance_records: Vec<SourceBalanceRecord>,
+    balance_tracker: SourceBalanceTracker,
+}
+
+impl<'a> CrawlBuffers<'a> {
+    fn new(dedup: &'a mut DedupStore) -> Self {
+        Self {
+            dedup,
+            raw_events: Vec::new(),
+            health_records: Vec::new(),
+            heal_records: Vec::new(),
+            balance_records: Vec::new(),
+            balance_tracker: SourceBalanceTracker::default(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct SourceOutcome {
+    events_written: usize,
+    duplicates_skipped: usize,
 }
 
 async fn fetch_source_items(
