@@ -34,6 +34,7 @@ pub(crate) struct Args {
     pub(crate) community_max_events_per_source: usize,
     pub(crate) backfill_start_ms: Option<i64>,
     pub(crate) backfill_end_ms: Option<i64>,
+    pub(crate) replay_pending_outbox: bool,
 }
 
 impl Args {
@@ -77,6 +78,7 @@ fn default_args() -> Args {
         community_max_events_per_source: DEFAULT_COMMUNITY_MAX_EVENTS_PER_SOURCE,
         backfill_start_ms: None,
         backfill_end_ms: None,
+        replay_pending_outbox: false,
     }
 }
 
@@ -172,6 +174,10 @@ where
         }
         "--backfill-end-ms" => {
             args.backfill_end_ms = Some(non_negative_i64_arg(values.next(), "--backfill-end-ms")?);
+            Ok(())
+        }
+        "--replay-pending-outbox" => {
+            args.replay_pending_outbox = true;
             Ok(())
         }
         "--help" | "-h" => Err(help()),
@@ -303,7 +309,7 @@ fn non_negative_i64_arg(value: Option<String>, name: &str) -> Result<i64, String
 
 fn help() -> String {
     format!(
-        "Usage: intel-crawl-app [--source-registry ABS_PATH] [--max-items-per-source N] [--schedule-interval-ms N] [--source-id ID] [--nats-url nats://HOST:4222] [--nats-subject SUBJECT] [--nats-stream STREAM] [--object-store-endpoint URL] [--object-store-bucket BUCKET] [--object-store-region REGION] [--object-store-force-path-style true|false] [--dedup-lookback-days N] [--chunk-max-records N] [--derivatives-max-events-per-run N] [--derivatives-max-events-per-source N] [--community-max-events-per-run N] [--community-max-events-per-source N] [--backfill-start-ms TS] [--backfill-end-ms TS] [--dry-run]\n\nDefaults:\n  --source-registry {DEFAULT_SOURCE_REGISTRY_PATH}\n  --nats-subject {DEFAULT_NATS_SUBJECT}\n  --nats-stream {DEFAULT_NATS_STREAM}\n  --object-store-endpoint {DEFAULT_OBJECT_STORE_ENDPOINT}\n  --object-store-bucket {DEFAULT_OBJECT_STORE_BUCKET}\n  --object-store-region {DEFAULT_OBJECT_STORE_REGION}\n  --derivatives-max-events-per-run {DEFAULT_DERIVATIVES_MAX_EVENTS_PER_RUN}\n  --derivatives-max-events-per-source {DEFAULT_DERIVATIVES_MAX_EVENTS_PER_SOURCE}\n  --community-max-events-per-run {DEFAULT_COMMUNITY_MAX_EVENTS_PER_RUN}\n  --community-max-events-per-source {DEFAULT_COMMUNITY_MAX_EVENTS_PER_SOURCE}"
+        "Usage: intel-crawl-app [--source-registry ABS_PATH] [--max-items-per-source N] [--schedule-interval-ms N] [--source-id ID] [--nats-url nats://HOST:4222] [--nats-subject SUBJECT] [--nats-stream STREAM] [--object-store-endpoint URL] [--object-store-bucket BUCKET] [--object-store-region REGION] [--object-store-force-path-style true|false] [--dedup-lookback-days N] [--chunk-max-records N] [--derivatives-max-events-per-run N] [--derivatives-max-events-per-source N] [--community-max-events-per-run N] [--community-max-events-per-source N] [--backfill-start-ms TS] [--backfill-end-ms TS] [--replay-pending-outbox] [--dry-run]\n\nDefaults:\n  --source-registry {DEFAULT_SOURCE_REGISTRY_PATH}\n  --nats-subject {DEFAULT_NATS_SUBJECT}\n  --nats-stream {DEFAULT_NATS_STREAM}\n  --object-store-endpoint {DEFAULT_OBJECT_STORE_ENDPOINT}\n  --object-store-bucket {DEFAULT_OBJECT_STORE_BUCKET}\n  --object-store-region {DEFAULT_OBJECT_STORE_REGION}\n  --derivatives-max-events-per-run {DEFAULT_DERIVATIVES_MAX_EVENTS_PER_RUN}\n  --derivatives-max-events-per-source {DEFAULT_DERIVATIVES_MAX_EVENTS_PER_SOURCE}\n  --community-max-events-per-run {DEFAULT_COMMUNITY_MAX_EVENTS_PER_RUN}\n  --community-max-events-per-source {DEFAULT_COMMUNITY_MAX_EVENTS_PER_SOURCE}"
     )
 }
 

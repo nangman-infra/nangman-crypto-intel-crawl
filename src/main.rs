@@ -3,14 +3,18 @@ mod balance;
 mod coverage;
 mod dedup;
 mod event;
+mod fetch;
 mod health;
 mod html;
 mod item;
+mod normalization;
 mod object_store;
 mod publisher;
 mod registry;
+mod replay;
 mod rest_api;
 mod rss;
+mod source_state;
 mod storage;
 mod symbols;
 
@@ -20,14 +24,16 @@ use balance::{
 };
 use chrono::Utc;
 use coverage::build_source_coverage_report;
-use dedup::DedupStore;
+use dedup::{DedupDecision, DedupStore};
 use event::{RawIntelEvent, build_raw_intel_event, build_raw_intel_event_created_pointer};
+use fetch::SourceFetchResult;
 use health::{SourceHealRecord, SourceHealthRecord};
 use item::FeedItem;
 use object_store::ObjectStore;
 use publisher::EventPublisher;
 use registry::{Source, SourceRegistry};
 use serde::Serialize;
+use source_state::{SourceFetchStates, now_ms};
 use std::error::Error;
 use storage::{IntelL0Storage, ManifestInput, StoredRawIntelEvent, UploadedObject};
 use symbols::SymbolMatcher;
@@ -43,20 +49,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let registry = SourceRegistry::load(&args.source_registry).await?;
-    if let Some(source_id) = args.source_id.as_deref() {
-        registry.require_enabled_source(source_id)?;
-    }
-    let matcher = SymbolMatcher::new(&registry.universe_assets);
     let object_store = if args.dry_run {
         None
     } else {
         Some(ObjectStore::connect(args.object_store.clone()).await?)
-    };
-    let mut dedup = if let Some(object_store) = object_store.as_ref() {
-        DedupStore::load_from_object_store(object_store, args.dedup_lookback_days).await?
-    } else {
-        DedupStore::default()
     };
     let publisher = if args.dry_run {
         EventPublisher::Disabled
@@ -67,6 +63,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
             &args.nats_stream,
         )
         .await?
+    };
+    if args.replay_pending_outbox {
+        let Some(object_store) = object_store.as_ref() else {
+            return Err("--replay-pending-outbox requires object store access".into());
+        };
+        let summary = replay::replay_pending_outbox(object_store, &publisher).await?;
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
+
+    let registry = SourceRegistry::load(&args.source_registry).await?;
+    if let Some(source_id) = args.source_id.as_deref() {
+        registry.require_enabled_source(source_id)?;
+    }
+    let matcher = SymbolMatcher::new(&registry.universe_assets);
+    let mut dedup = if let Some(object_store) = object_store.as_ref() {
+        DedupStore::load_from_object_store(object_store, args.dedup_lookback_days).await?
+    } else {
+        DedupStore::default()
     };
 
     let client = reqwest::Client::builder()
@@ -79,19 +94,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let storage = object_store.as_ref().map(|object_store| {
             IntelL0Storage::new(object_store.clone(), run_id(), args.chunk_max_records)
         });
+        let sources = registry.enabled_sources(args.source_id.as_deref());
+        let mut source_states = SourceFetchStates::load(object_store.as_ref(), &sources).await?;
         let mut outputs = CrawlOutputs { dedup: &mut dedup };
-        let summary = crawl_once(
-            &args,
-            &registry,
-            &matcher,
-            &client,
-            &mut outputs,
-            &publisher,
-            storage.as_ref(),
-        )
+        let summary = crawl_once(CrawlOnceInput {
+            args: &args,
+            registry: &registry,
+            sources,
+            object_store: object_store.as_ref(),
+            source_states: &mut source_states,
+            matcher: &matcher,
+            client: &client,
+            outputs: &mut outputs,
+            publisher: &publisher,
+            storage: storage.as_ref(),
+        })
         .await?;
         println!("{}", serde_json::to_string_pretty(&summary)?);
         publisher.flush().await?;
+        source_states.persist(object_store.as_ref()).await?;
 
         let Some(interval_ms) = args.schedule_interval_ms else {
             break;
@@ -102,42 +123,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn crawl_once(
-    args: &Args,
-    registry: &SourceRegistry,
-    matcher: &SymbolMatcher,
-    client: &reqwest::Client,
-    outputs: &mut CrawlOutputs<'_>,
-    publisher: &EventPublisher,
-    storage: Option<&IntelL0Storage>,
-) -> Result<CrawlSummary, Box<dyn Error>> {
+async fn crawl_once(input: CrawlOnceInput<'_>) -> Result<CrawlSummary, Box<dyn Error>> {
     let started_at_ms = Utc::now().timestamp_millis();
     let balance_policy = SourceBalancePolicy {
-        derivatives_max_events_per_run: args.derivatives_max_events_per_run,
-        derivatives_max_events_per_source: args.derivatives_max_events_per_source,
-        community_max_events_per_run: args.community_max_events_per_run,
-        community_max_events_per_source: args.community_max_events_per_source,
+        derivatives_max_events_per_run: input.args.derivatives_max_events_per_run,
+        derivatives_max_events_per_source: input.args.derivatives_max_events_per_source,
+        community_max_events_per_run: input.args.community_max_events_per_run,
+        community_max_events_per_source: input.args.community_max_events_per_source,
     };
-    let sources = registry.enabled_sources(args.source_id.as_deref());
-    let mut summary = CrawlSummary::new(sources.len(), args.dry_run, publisher.is_enabled());
-    let mut buffers = CrawlBuffers::new(outputs.dedup);
-    let context = CrawlContext {
-        args,
-        registry,
-        matcher,
-        client,
+    let mut summary = CrawlSummary::new(
+        input.sources.len(),
+        input.args.dry_run,
+        input.publisher.is_enabled(),
+    );
+    let mut buffers = CrawlBuffers::new(input.outputs.dedup);
+    let mut context = CrawlContext {
+        args: input.args,
+        registry: input.registry,
+        object_store: input.object_store,
+        source_states: input.source_states,
+        matcher: input.matcher,
+        client: input.client,
         balance_policy,
     };
 
-    for source in sources {
-        crawl_source(&context, source, &mut buffers, &mut summary).await?;
+    for source in input.sources {
+        crawl_source(&mut context, source, &mut buffers, &mut summary).await?;
     }
 
-    if let Some(storage) = storage {
+    if let Some(storage) = input.storage {
         write_storage_outputs(
             storage,
-            publisher,
-            registry,
+            input.publisher,
+            input.registry,
             buffers,
             started_at_ms,
             &mut summary,
@@ -149,34 +167,55 @@ async fn crawl_once(
 }
 
 async fn crawl_source(
-    context: &CrawlContext<'_>,
+    context: &mut CrawlContext<'_>,
     source: &Source,
     buffers: &mut CrawlBuffers<'_>,
     summary: &mut CrawlSummary,
 ) -> Result<(), Box<dyn Error>> {
     let checked_at_ms = Utc::now().timestamp_millis();
+    if should_skip_source_for_backoff(context, source, checked_at_ms, buffers, summary) {
+        return Ok(());
+    }
     let mut source_stats = SourceRunStats::default();
-    let result = fetch_source_items(
-        context.client,
-        context.registry,
+    let result = fetch_source_items(SourceFetchRequest {
+        client: context.client,
+        registry: context.registry,
         source,
-        context.args.max_items_per_source,
-        context.balance_policy,
-        context.args.backfill_start_ms,
-        context.args.backfill_end_ms,
-    )
+        cache_headers: context
+            .source_states
+            .get(source)
+            .map(|state| state.cache_headers()),
+        default_max_items: context.args.max_items_per_source,
+        balance_policy: context.balance_policy,
+        backfill_start_ms: context.args.backfill_start_ms,
+        backfill_end_ms: context.args.backfill_end_ms,
+    })
     .await;
 
     match result {
-        Ok(items) => record_source_items(
-            context,
-            source,
-            checked_at_ms,
-            items,
-            &mut source_stats,
-            buffers,
-            summary,
-        ),
+        Ok(SourceFetchResult::Fetched { items, metadata }) => {
+            context
+                .source_states
+                .get_mut(source)
+                .record_success(&metadata, now_ms(), items.len());
+            record_source_items(
+                context,
+                source,
+                checked_at_ms,
+                items,
+                &mut source_stats,
+                buffers,
+                summary,
+            )
+            .await?;
+        }
+        Ok(SourceFetchResult::NotModified { metadata }) => {
+            context
+                .source_states
+                .get_mut(source)
+                .record_not_modified(&metadata, now_ms());
+            record_source_not_modified(context, source, checked_at_ms, buffers, summary);
+        }
         Err(error) => record_source_failure(
             context,
             source,
@@ -190,29 +229,31 @@ async fn crawl_source(
     Ok(())
 }
 
-fn record_source_items(
-    context: &CrawlContext<'_>,
+async fn record_source_items(
+    context: &mut CrawlContext<'_>,
     source: &Source,
     checked_at_ms: i64,
     items: Vec<FeedItem>,
     source_stats: &mut SourceRunStats,
     buffers: &mut CrawlBuffers<'_>,
     summary: &mut CrawlSummary,
-) {
+) -> Result<(), Box<dyn Error>> {
     let fetched_at_ms = Utc::now().timestamp_millis();
     let source_items_seen = items.len();
     source_stats.items_seen = source_items_seen;
     summary.sources_ok += 1;
     summary.items_seen += source_items_seen;
-    let source_outcome = append_source_events(
-        context,
-        source,
-        items,
-        fetched_at_ms,
-        source_stats,
-        buffers,
-        summary,
-    );
+    let mut events = build_candidate_events(context, source, items, fetched_at_ms);
+    if !context.args.dry_run
+        && let Some(object_store) = context.object_store
+    {
+        buffers
+            .dedup
+            .load_candidate_shards(object_store, &events, context.args.dedup_lookback_days)
+            .await?;
+    }
+    let source_outcome =
+        append_source_events(context, source, &mut events, source_stats, buffers, summary);
     buffers.health_records.push(SourceHealthRecord::ok(
         source,
         checked_at_ms,
@@ -228,24 +269,67 @@ fn record_source_items(
         Utc::now().timestamp_millis(),
     ));
     summary.source_health_written += usize::from(!context.args.dry_run);
+    Ok(())
+}
+
+fn record_source_not_modified(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    checked_at_ms: i64,
+    buffers: &mut CrawlBuffers<'_>,
+    summary: &mut CrawlSummary,
+) {
+    let observed_at_ms = Utc::now().timestamp_millis();
+    summary.sources_ok += 1;
+    buffers
+        .health_records
+        .push(SourceHealthRecord::not_modified(
+            source,
+            checked_at_ms,
+            observed_at_ms,
+        ));
+    buffers.balance_records.push(SourceBalanceRecord::new(
+        source,
+        SourceRunStats::default(),
+        context.balance_policy,
+        observed_at_ms,
+    ));
+    summary.source_health_written += usize::from(!context.args.dry_run);
+}
+
+fn build_candidate_events(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    items: Vec<FeedItem>,
+    fetched_at_ms: i64,
+) -> Vec<RawIntelEvent> {
+    items
+        .into_iter()
+        .map(|item| {
+            let matched_assets = context
+                .matcher
+                .match_item(&item.title, &item.body, &item.url);
+            build_raw_intel_event(source, &item, &matched_assets, fetched_at_ms)
+        })
+        .collect()
 }
 
 fn append_source_events(
     context: &CrawlContext<'_>,
     source: &Source,
-    items: Vec<FeedItem>,
-    fetched_at_ms: i64,
+    events: &mut [RawIntelEvent],
     source_stats: &mut SourceRunStats,
     buffers: &mut CrawlBuffers<'_>,
     summary: &mut CrawlSummary,
 ) -> SourceOutcome {
     let mut outcome = SourceOutcome::default();
-    for item in items {
-        let matched_assets = context
-            .matcher
-            .match_item(&item.title, &item.body, &item.url);
-        let event = build_raw_intel_event(source, &item, &matched_assets, fetched_at_ms);
-        if is_duplicate_event(context.args, buffers, event.dedup_key()) {
+    for event in events {
+        let dedup_decision = dedup_decision(context.args, buffers, event);
+        event.set_dedup_outcome(
+            dedup_decision.label(),
+            dedup_decision.duplicate_of_event_id(),
+        );
+        if dedup_decision.is_skipped_duplicate() {
             summary.events_skipped_duplicate += 1;
             outcome.duplicates_skipped += 1;
             source_stats.duplicates_skipped += 1;
@@ -263,13 +347,21 @@ fn append_source_events(
         }
         outcome.events_written += usize::from(!context.args.dry_run);
         source_stats.events_emitted += 1;
-        buffers.raw_events.push(event);
+        buffers.raw_events.push(event.clone());
     }
     outcome
 }
 
-fn is_duplicate_event(args: &Args, buffers: &mut CrawlBuffers<'_>, dedup_key: &str) -> bool {
-    !args.dry_run && !buffers.dedup.is_new(dedup_key)
+fn dedup_decision(
+    args: &Args,
+    buffers: &mut CrawlBuffers<'_>,
+    event: &RawIntelEvent,
+) -> DedupDecision {
+    if args.dry_run {
+        DedupDecision::New
+    } else {
+        buffers.dedup.decide_and_insert(event)
+    }
 }
 
 fn suppress_by_balance(
@@ -290,7 +382,7 @@ fn suppress_by_balance(
 }
 
 fn record_source_failure(
-    context: &CrawlContext<'_>,
+    context: &mut CrawlContext<'_>,
     source: &Source,
     checked_at_ms: i64,
     error: Box<dyn Error>,
@@ -327,6 +419,43 @@ fn record_source_failure(
             context.args.schedule_interval_ms,
         ));
     summary.source_heal_written += usize::from(!context.args.dry_run);
+    context
+        .source_states
+        .get_mut(source)
+        .record_failure(&error, observed_at_ms);
+}
+
+fn should_skip_source_for_backoff(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    checked_at_ms: i64,
+    buffers: &mut CrawlBuffers<'_>,
+    summary: &mut CrawlSummary,
+) -> bool {
+    let Some(state) = context.source_states.get(source) else {
+        return false;
+    };
+    if !state.is_backing_off(checked_at_ms) {
+        return false;
+    }
+    let observed_at_ms = Utc::now().timestamp_millis();
+    summary.sources_ok += 1;
+    buffers
+        .health_records
+        .push(SourceHealthRecord::skipped_backoff(
+            source,
+            checked_at_ms,
+            observed_at_ms,
+            state.backoff_until_ms(),
+        ));
+    buffers.balance_records.push(SourceBalanceRecord::new(
+        source,
+        SourceRunStats::default(),
+        context.balance_policy,
+        observed_at_ms,
+    ));
+    summary.source_health_written += usize::from(!context.args.dry_run);
+    true
 }
 
 async fn write_storage_outputs(
@@ -358,12 +487,11 @@ async fn write_storage_outputs(
         uploaded_objects: publish_uploaded_objects,
     } = publish_stored_events(storage, publisher, &stored_events, summary).await?;
     uploaded_objects.extend(publish_uploaded_objects);
-    if let Some(object) = storage
-        .write_dedup_index(&persisted_events, observed_at_ms)
-        .await?
-    {
-        uploaded_objects.push(object);
-    }
+    uploaded_objects.extend(
+        storage
+            .write_dedup_index(&persisted_events, observed_at_ms)
+            .await?,
+    );
     write_manifest(
         storage,
         started_at_ms,
@@ -463,9 +591,24 @@ struct CrawlOutputs<'a> {
     dedup: &'a mut DedupStore,
 }
 
+struct CrawlOnceInput<'a> {
+    args: &'a Args,
+    registry: &'a SourceRegistry,
+    sources: Vec<&'a Source>,
+    object_store: Option<&'a ObjectStore>,
+    source_states: &'a mut SourceFetchStates,
+    matcher: &'a SymbolMatcher,
+    client: &'a reqwest::Client,
+    outputs: &'a mut CrawlOutputs<'a>,
+    publisher: &'a EventPublisher,
+    storage: Option<&'a IntelL0Storage>,
+}
+
 struct CrawlContext<'a> {
     args: &'a Args,
     registry: &'a SourceRegistry,
+    object_store: Option<&'a ObjectStore>,
+    source_states: &'a mut SourceFetchStates,
     matcher: &'a SymbolMatcher,
     client: &'a reqwest::Client,
     balance_policy: SourceBalancePolicy,
@@ -499,32 +642,60 @@ struct SourceOutcome {
     duplicates_skipped: usize,
 }
 
-async fn fetch_source_items(
-    client: &reqwest::Client,
-    registry: &SourceRegistry,
-    source: &Source,
+struct SourceFetchRequest<'a> {
+    client: &'a reqwest::Client,
+    registry: &'a SourceRegistry,
+    source: &'a Source,
+    cache_headers: Option<fetch::CacheHeaders>,
     default_max_items: usize,
     balance_policy: SourceBalancePolicy,
     backfill_start_ms: Option<i64>,
     backfill_end_ms: Option<i64>,
-) -> Result<Vec<FeedItem>, Box<dyn Error>> {
-    let item_limit =
-        balance_policy.effective_item_limit(source, source.item_limit(default_max_items));
-    match source.fetch_method.as_str() {
-        "rss" => rss::fetch_feed_items(client, source, item_limit).await,
-        "rest_api" => {
-            rest_api::fetch_feed_items(
-                client,
-                source,
-                &registry.universe_assets,
+}
+
+async fn fetch_source_items(
+    request: SourceFetchRequest<'_>,
+) -> Result<SourceFetchResult, Box<dyn Error>> {
+    let item_limit = request.balance_policy.effective_item_limit(
+        request.source,
+        request.source.item_limit(request.default_max_items),
+    );
+    match request.source.fetch_method.as_str() {
+        "rss" => {
+            rss::fetch_feed_items(
+                request.client,
+                request.source,
+                request.cache_headers.as_ref(),
                 item_limit,
-                backfill_start_ms,
-                backfill_end_ms,
             )
             .await
         }
-        "html_crawl" => html::fetch_feed_items(client, source, item_limit).await,
-        other => Err(format!("{} unsupported fetch_method {other}", source.source_id).into()),
+        "rest_api" => {
+            rest_api::fetch_feed_items(
+                request.client,
+                request.source,
+                &request.registry.universe_assets,
+                request.cache_headers.as_ref(),
+                item_limit,
+                request.backfill_start_ms,
+                request.backfill_end_ms,
+            )
+            .await
+        }
+        "html_crawl" => {
+            html::fetch_feed_items(
+                request.client,
+                request.source,
+                request.cache_headers.as_ref(),
+                item_limit,
+            )
+            .await
+        }
+        other => Err(format!(
+            "{} unsupported fetch_method {other}",
+            request.source.source_id
+        )
+        .into()),
     }
 }
 

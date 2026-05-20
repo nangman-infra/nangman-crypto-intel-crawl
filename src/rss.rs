@@ -1,3 +1,4 @@
+use crate::fetch::{CacheHeaders, SourceFetchResult, apply_cache_headers, metadata_from_headers};
 use crate::item::FeedItem;
 use crate::registry::Source;
 use roxmltree::{Document, Node};
@@ -6,17 +7,19 @@ use std::error::Error;
 pub(crate) async fn fetch_feed_items(
     client: &reqwest::Client,
     source: &Source,
+    cache_headers: Option<&CacheHeaders>,
     max_items: usize,
-) -> Result<Vec<FeedItem>, Box<dyn Error>> {
-    let response = client
-        .get(&source.source_url)
-        .header(
-            "Accept",
-            "application/rss+xml, application/atom+xml, application/xml, text/xml",
-        )
-        .send()
-        .await?;
+) -> Result<SourceFetchResult, Box<dyn Error>> {
+    let request = client.get(&source.source_url).header(
+        "Accept",
+        "application/rss+xml, application/atom+xml, application/xml, text/xml",
+    );
+    let response = apply_cache_headers(request, cache_headers).send().await?;
     let status = response.status();
+    let metadata = metadata_from_headers(status, response.headers());
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(SourceFetchResult::NotModified { metadata });
+    }
     if !status.is_success() {
         return Err(format!("{} returned HTTP {}", source.source_id, status.as_u16()).into());
     }
@@ -30,7 +33,10 @@ pub(crate) async fn fetch_feed_items(
     if !looks_like_xml_feed(&body, &content_type) {
         return Err(format!("{} did not return an XML feed", source.source_id).into());
     }
-    parse_feed_items(&body, max_items)
+    Ok(SourceFetchResult::Fetched {
+        items: parse_feed_items(&body, max_items)?,
+        metadata,
+    })
 }
 
 fn looks_like_xml_feed(body: &str, content_type: &str) -> bool {

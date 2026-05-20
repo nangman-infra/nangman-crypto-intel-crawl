@@ -1,3 +1,4 @@
+use crate::fetch::{CacheHeaders, SourceFetchResult, apply_cache_headers, metadata_from_headers};
 use crate::item::FeedItem;
 use crate::registry::Source;
 use std::error::Error;
@@ -5,14 +6,18 @@ use std::error::Error;
 pub(crate) async fn fetch_feed_items(
     client: &reqwest::Client,
     source: &Source,
+    cache_headers: Option<&CacheHeaders>,
     max_items: usize,
-) -> Result<Vec<FeedItem>, Box<dyn Error>> {
-    let response = client
+) -> Result<SourceFetchResult, Box<dyn Error>> {
+    let request = client
         .get(&source.source_url)
-        .header("Accept", "text/html,application/xhtml+xml")
-        .send()
-        .await?;
+        .header("Accept", "text/html,application/xhtml+xml");
+    let response = apply_cache_headers(request, cache_headers).send().await?;
     let status = response.status();
+    let metadata = metadata_from_headers(status, response.headers());
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(SourceFetchResult::NotModified { metadata });
+    }
     if !status.is_success() {
         return Err(format!("{} returned HTTP {}", source.source_id, status.as_u16()).into());
     }
@@ -20,7 +25,10 @@ pub(crate) async fn fetch_feed_items(
     if looks_blocked(&body) {
         return Err(format!("{} returned a bot challenge page", source.source_id).into());
     }
-    Ok(extract_anchor_items(&source.source_url, &body, max_items))
+    Ok(SourceFetchResult::Fetched {
+        items: extract_anchor_items(&source.source_url, &body, max_items),
+        metadata,
+    })
 }
 
 fn looks_blocked(body: &str) -> bool {

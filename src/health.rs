@@ -47,6 +47,7 @@ impl SourceHealthRecord {
             duplicate_events_skipped,
             latency_ms: observed_at_ms.saturating_sub(checked_at_ms),
             error: None,
+            backoff_state: "none",
         })
     }
 
@@ -66,13 +67,49 @@ impl SourceHealthRecord {
             duplicate_events_skipped: 0,
             latency_ms: observed_at_ms.saturating_sub(checked_at_ms),
             error: Some(error),
+            backoff_state: "scheduled",
+        })
+    }
+
+    pub(crate) fn not_modified(source: &Source, checked_at_ms: i64, observed_at_ms: i64) -> Self {
+        Self::new(HealthRecordInput {
+            source,
+            checked_at_ms,
+            observed_at_ms,
+            status: "not_modified",
+            items_seen: 0,
+            events_written: 0,
+            duplicate_events_skipped: 0,
+            latency_ms: observed_at_ms.saturating_sub(checked_at_ms),
+            error: None,
+            backoff_state: "none",
+        })
+    }
+
+    pub(crate) fn skipped_backoff(
+        source: &Source,
+        checked_at_ms: i64,
+        observed_at_ms: i64,
+        backoff_until_ms: Option<i64>,
+    ) -> Self {
+        Self::new(HealthRecordInput {
+            source,
+            checked_at_ms,
+            observed_at_ms,
+            status: "skipped_backoff",
+            items_seen: 0,
+            events_written: 0,
+            duplicate_events_skipped: 0,
+            latency_ms: 0,
+            error: backoff_until_ms.map(|until| format!("backoff_until_ms={until}")),
+            backoff_state: "active",
         })
     }
 
     fn new(input: HealthRecordInput<'_>) -> Self {
         let health_level = match input.status {
-            "ok" => "healthy",
-            "no_items" => "degraded",
+            "ok" | "not_modified" => "healthy",
+            "no_items" | "skipped_backoff" => "degraded",
             _ => "blocked",
         };
         let health_event_id = format!(
@@ -100,7 +137,7 @@ impl SourceHealthRecord {
             items_fetched: input.items_seen,
             items_emitted: input.events_written,
             dedup_dropped: input.duplicate_events_skipped,
-            backoff_state: "none".to_owned(),
+            backoff_state: input.backoff_state.to_owned(),
             health_level: health_level.to_owned(),
             status: input.status.to_owned(),
             items_seen: input.items_seen,
@@ -121,6 +158,7 @@ struct HealthRecordInput<'a> {
     duplicate_events_skipped: usize,
     latency_ms: i64,
     error: Option<String>,
+    backoff_state: &'a str,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -79,6 +79,10 @@ impl ObjectStore {
         Ok(output.body.collect().await?.into_bytes().to_vec())
     }
 
+    pub(crate) async fn key_exists(&self, key: &str) -> Result<bool, Box<dyn Error>> {
+        Ok(!self.list_keys(key).await?.is_empty())
+    }
+
     pub(crate) async fn list_keys(&self, prefix: &str) -> Result<Vec<String>, Box<dyn Error>> {
         let mut keys = Vec::new();
         let mut continuation_token: Option<String> = None;

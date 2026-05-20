@@ -1,3 +1,6 @@
+use crate::fetch::{
+    CacheHeaders, FetchMetadata, SourceFetchResult, apply_cache_headers, metadata_from_headers,
+};
 use crate::item::FeedItem;
 use crate::registry::{Source, UniverseAsset};
 use serde::Deserialize;
@@ -9,27 +12,31 @@ pub(crate) async fn fetch_feed_items(
     client: &reqwest::Client,
     source: &Source,
     assets: &[UniverseAsset],
+    cache_headers: Option<&CacheHeaders>,
     max_items: usize,
     backfill_start_ms: Option<i64>,
     backfill_end_ms: Option<i64>,
-) -> Result<Vec<FeedItem>, Box<dyn Error>> {
+) -> Result<SourceFetchResult, Box<dyn Error>> {
     match source.adapter.as_deref() {
         Some("binance_cms_announcement_list") => {
-            fetch_binance_cms_announcements(client, source, max_items).await
+            fetch_binance_cms_announcements(client, source, cache_headers, max_items).await
         }
         Some("binance_usdm_funding_rate_history") => {
             let (start_ms, end_ms) =
                 required_backfill_window(source, backfill_start_ms, backfill_end_ms)?;
-            fetch_binance_usdm_funding_rate_history(
+            let items = fetch_binance_usdm_funding_rate_history(
                 client, source, assets, max_items, start_ms, end_ms,
             )
-            .await
+            .await?;
+            Ok(fetched_without_cache_metadata(items))
         }
         Some("binance_usdm_funding_rate_latest") => {
-            fetch_binance_usdm_funding_rates(client, source, assets, max_items).await
+            let items = fetch_binance_usdm_funding_rates(client, source, assets, max_items).await?;
+            Ok(fetched_without_cache_metadata(items))
         }
         Some("binance_usdm_open_interest") => {
-            fetch_binance_usdm_open_interest(client, source, assets, max_items).await
+            let items = fetch_binance_usdm_open_interest(client, source, assets, max_items).await?;
+            Ok(fetched_without_cache_metadata(items))
         }
         Some(adapter) => {
             Err(format!("{} unknown rest_api adapter {adapter}", source.source_id).into())
@@ -41,10 +48,15 @@ pub(crate) async fn fetch_feed_items(
 async fn fetch_binance_cms_announcements(
     client: &reqwest::Client,
     source: &Source,
+    cache_headers: Option<&CacheHeaders>,
     max_items: usize,
-) -> Result<Vec<FeedItem>, Box<dyn Error>> {
-    let response = get_json_response_with_retry(client, &source.source_url).await?;
+) -> Result<SourceFetchResult, Box<dyn Error>> {
+    let response = get_json_response_with_retry(client, &source.source_url, cache_headers).await?;
     let status = response.status();
+    let metadata = metadata_from_headers(status, response.headers());
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(SourceFetchResult::NotModified { metadata });
+    }
     if !status.is_success() {
         return Err(format!("{} returned HTTP {}", source.source_id, status.as_u16()).into());
     }
@@ -69,25 +81,23 @@ async fn fetch_binance_cms_announcements(
                     });
                 items.push(binance_cms_article_item(article, body));
                 if items.len() >= max_items {
-                    return Ok(items);
+                    return Ok(SourceFetchResult::Fetched { items, metadata });
                 }
             }
         }
     }
-    Ok(items)
+    Ok(SourceFetchResult::Fetched { items, metadata })
 }
 
 async fn get_json_response_with_retry(
     client: &reqwest::Client,
     url: &str,
+    cache_headers: Option<&CacheHeaders>,
 ) -> Result<reqwest::Response, reqwest::Error> {
     let mut last_response = None;
     for attempt in 0..=1 {
-        let response = client
-            .get(url)
-            .header("Accept", "application/json")
-            .send()
-            .await?;
+        let request = client.get(url).header("Accept", "application/json");
+        let response = apply_cache_headers(request, cache_headers).send().await?;
         if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Ok(response);
         }
@@ -99,11 +109,19 @@ async fn get_json_response_with_retry(
     if let Some(response) = last_response {
         Ok(response)
     } else {
-        client
-            .get(url)
-            .header("Accept", "application/json")
-            .send()
-            .await
+        let request = client.get(url).header("Accept", "application/json");
+        apply_cache_headers(request, cache_headers).send().await
+    }
+}
+
+fn fetched_without_cache_metadata(items: Vec<FeedItem>) -> SourceFetchResult {
+    SourceFetchResult::Fetched {
+        items,
+        metadata: FetchMetadata {
+            http_status: 200,
+            etag: None,
+            last_modified: None,
+        },
     }
 }
 

@@ -131,6 +131,8 @@ source-heal/schema=source_heal_event_v1/dt=YYYY-MM-DD/hour=HH/run_id=.../part-00
 source-coverage/schema=source_coverage_v1/dt=YYYY-MM-DD/hour=HH/run_id=.../part-000001.jsonl
 source-balance/schema=source_balance_v1/dt=YYYY-MM-DD/hour=HH/run_id=.../part-000001.jsonl
 dedup-index/schema=dedup_index_v1/dt=YYYY-MM-DD/hour=HH/run_id=.../part-000001.jsonl
+dedup-index-v2/schema=dedup_index_v2/dt=YYYY-MM-DD/hash_prefix=.../hour=HH/run_id=.../part-000001.jsonl
+source-fetch-state/schema=source_fetch_state_v1/source_id=.../state.json
 publish-outbox/status=published/schema=raw_intel_event_created_v2/dt=YYYY-MM-DD/hour=HH/run_id=.../part-000001.jsonl
 publish-outbox/status=pending/schema=raw_intel_event_created_v2/dt=YYYY-MM-DD/hour=HH/run_id=.../part-000001.jsonl
 manifests/schema=intel_l0_manifest_v1/dt=YYYY-MM-DD/hour=HH/run_id=....json
@@ -242,11 +244,22 @@ handled by the static app process plus CA certificates.
 ```
 
 Before writing a new event, the worker loads recent RustFS `dedup-index`
-chunks. Repeated runs skip already-written events and only publish NATS pointers
-for newly stored events. After raw events are successfully persisted to S3, those
-stored events are included in `dedup-index` even if optional NATS pointer publish
-is pending. This keeps Spot restarts or temporary NATS outages from writing the
-same raw event again; pending pointer delivery is tracked separately through
+compatibility chunks and the candidate-specific `dedup-index-v2` hash-prefix
+shards. Repeated runs skip already-written events and only publish NATS pointers
+for newly stored events. `dedup-index-v2` stores source identity, canonical URL,
+normalized content hash, and SimHash metadata so the worker can suppress exact,
+cross-source content, and near-duplicate events before they reach INTEL-L1.
+
+The worker also persists `source-fetch-state` for each source. RSS, static HTML,
+and supported REST list endpoints reuse stored `ETag` and `Last-Modified`
+headers with conditional GET requests; `304 Not Modified` is recorded as healthy
+source activity without reprocessing unchanged content. Consecutive failures set
+a bounded source-level backoff so unstable sources do not dominate a Spot worker.
+
+After raw events are successfully persisted to S3, those stored events are
+included in `dedup-index` even if optional NATS pointer publish is pending. This
+keeps Spot restarts or temporary NATS outages from writing the same raw event
+again; pending pointer delivery is tracked separately through
 `publish-outbox/status=pending`.
 
 When NATS publishing is enabled, the worker uses JetStream publish with expected
@@ -325,6 +338,24 @@ AWS_ACCESS_KEY_ID=... \
 AWS_SECRET_ACCESS_KEY=... \
 cargo run \
   -- \
+  --object-store-endpoint https://s3.nangman.cloud \
+  --object-store-bucket intel-crawl-app-l0 \
+  --object-store-region us-east-1 \
+  --object-store-force-path-style true \
+  --nats-url nats://127.0.0.1:4222 \
+  --nats-subject raw_intel_event.created \
+  --nats-stream RAW_INTEL
+```
+
+Replay pending NATS pointer outbox records without deleting or rewriting S3 raw
+events:
+
+```bash
+AWS_ACCESS_KEY_ID=... \
+AWS_SECRET_ACCESS_KEY=... \
+cargo run \
+  -- \
+  --replay-pending-outbox \
   --object-store-endpoint https://s3.nangman.cloud \
   --object-store-bucket intel-crawl-app-l0 \
   --object-store-region us-east-1 \

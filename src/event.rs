@@ -1,8 +1,8 @@
 use crate::item::FeedItem;
+use crate::normalization::{content_fingerprint, hash_hex, normalize_text_for_dedup};
 use crate::registry::Source;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -23,6 +23,13 @@ pub(crate) struct RawIntelEvent {
     cadence_tier: String,
     content_hash: String,
     dedup_key: String,
+    exact_source_key: String,
+    canonical_url: String,
+    canonical_url_hash: String,
+    normalized_content_hash: String,
+    simhash64: String,
+    dedup_decision: String,
+    duplicate_of_event_id: Option<String>,
     symbol_candidates: Vec<String>,
     event_category_hint: Option<String>,
     top50_relevance: String,
@@ -64,6 +71,39 @@ impl RawIntelEvent {
     pub(crate) fn dedup_key(&self) -> &str {
         &self.dedup_key
     }
+
+    pub(crate) fn exact_source_key(&self) -> &str {
+        &self.exact_source_key
+    }
+
+    pub(crate) fn canonical_url_hash(&self) -> &str {
+        &self.canonical_url_hash
+    }
+
+    pub(crate) fn normalized_content_hash(&self) -> &str {
+        &self.normalized_content_hash
+    }
+
+    pub(crate) fn simhash64_value(&self) -> u64 {
+        u64::from_str_radix(&self.simhash64, 16).unwrap_or(0)
+    }
+
+    pub(crate) fn dedup_decision(&self) -> &str {
+        &self.dedup_decision
+    }
+
+    pub(crate) fn duplicate_of_event_id(&self) -> Option<&str> {
+        self.duplicate_of_event_id.as_deref()
+    }
+
+    pub(crate) fn set_dedup_outcome(
+        &mut self,
+        dedup_decision: &str,
+        duplicate_of_event_id: Option<String>,
+    ) {
+        self.dedup_decision = dedup_decision.to_owned();
+        self.duplicate_of_event_id = duplicate_of_event_id;
+    }
 }
 
 pub(crate) fn build_raw_intel_event(
@@ -74,13 +114,23 @@ pub(crate) fn build_raw_intel_event(
 ) -> RawIntelEvent {
     let published_at_ms = item.published_at.as_deref().and_then(parse_published_at_ms);
     let body = clean_text(&item.body);
-    let content_hash = hash_hex(&format!("{}\n{}\n{}", item.title, body, item.url));
+    let title = clean_text(&item.title);
+    let fingerprint = content_fingerprint(&title, &body, &item.url);
     let dedupe_basis = item
         .id
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&item.url);
-    let dedup_key = format!("{}:{dedupe_basis}:{content_hash}", source.source_id);
+        .unwrap_or(&fingerprint.canonical_url);
+    let normalized_dedupe_basis = normalize_text_for_dedup(dedupe_basis);
+    let exact_source_key = hash_hex(&format!("{}:{normalized_dedupe_basis}", source.source_id));
+    let content_hash = hash_hex(&format!(
+        "{}\n{}",
+        fingerprint.normalized_text_hash, fingerprint.canonical_url_hash
+    ));
+    let dedup_key = format!(
+        "{}:{exact_source_key}:{}",
+        source.source_id, fingerprint.normalized_text_hash
+    );
     let mut candidates = BTreeSet::new();
     for asset in source.direct_assets() {
         candidates.insert(asset.to_owned());
@@ -118,7 +168,7 @@ pub(crate) fn build_raw_intel_event(
         published_at_ms,
         observed_at_ms: published_at_ms.unwrap_or(fetched_at_ms),
         language: source.language_hint.clone(),
-        title: clean_text(&item.title),
+        title,
         body,
         url: item.url.clone(),
         author_or_channel: item.author.clone(),
@@ -126,6 +176,13 @@ pub(crate) fn build_raw_intel_event(
         cadence_tier: source.cadence_tier.clone(),
         content_hash,
         dedup_key,
+        exact_source_key,
+        canonical_url: fingerprint.canonical_url,
+        canonical_url_hash: fingerprint.canonical_url_hash,
+        normalized_content_hash: fingerprint.normalized_text_hash,
+        simhash64: format!("{:016x}", fingerprint.simhash64),
+        dedup_decision: "new".to_owned(),
+        duplicate_of_event_id: None,
         symbol_candidates,
         event_category_hint: Some(event_category_hint(source).to_owned()),
         top50_relevance,
@@ -158,6 +215,8 @@ pub(crate) struct RawIntelEventCreatedPointer {
     created_at_ms: i64,
     content_hash: String,
     dedup_key: String,
+    dedup_decision: String,
+    duplicate_of_event_id: Option<String>,
     symbol_candidates: Vec<String>,
     top50_relevance: String,
     storage_ref: RawIntelEventStorageRef,
@@ -196,6 +255,8 @@ pub(crate) fn build_raw_intel_event_created_pointer(
         created_at_ms,
         content_hash: event.content_hash.clone(),
         dedup_key: event.dedup_key.clone(),
+        dedup_decision: event.dedup_decision.clone(),
+        duplicate_of_event_id: event.duplicate_of_event_id.clone(),
         symbol_candidates: event.symbol_candidates.clone(),
         top50_relevance: event.top50_relevance.clone(),
         storage_ref,
@@ -247,13 +308,6 @@ fn clean_text(value: &str) -> String {
         }
     }
     output.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn hash_hex(value: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    let digest = hasher.finalize();
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn short_hash(value: &str) -> String {

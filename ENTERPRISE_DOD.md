@@ -11,12 +11,12 @@
 ```text
 RSS/REST/static HTML public source fetch
 raw_intel_event JSONL chunk upload to RustFS
-source-local dedup
+source-local, cross-source content, and near-duplicate dedup
 source_health JSONL chunk upload to RustFS
 source_heal JSONL chunk upload to RustFS
 source_coverage JSONL chunk upload to RustFS
 source_balance JSONL chunk upload to RustFS
-dedup-index and manifest upload to RustFS
+source-fetch-state, dedup-index, and manifest upload to RustFS
 JetStream-acknowledged NATS pointer publish
 Docker Compose on-prem worker operation
 ```
@@ -63,6 +63,8 @@ derivatives REST sources must apply the enterprise safety ceiling even if env va
 derivatives REST asset requests must prioritize asset-specific verified symbols before global-news-only symbols
 raw_intel_event must carry content/source quality metadata for INTEL-L1 routing
 dedup_key prevents repeated RustFS/NATS emission across repeated runs
+dedup-index-v2 preserves canonical URL, normalized content hash, and SimHash metadata
+conditional GET state prevents unchanged public sources from being reprocessed every run
 source failures are recorded per source without hiding the failure in the summary
 ```
 
@@ -80,6 +82,7 @@ publish waits for server ack before incrementing events_published
 NATS message id is stable per raw_intel_event
 NATS publish failure after RustFS upload writes publish-outbox/status=pending
 NATS publish success writes publish-outbox/status=published
+pending outbox replay republishes pointers without deleting or rewriting raw S3 objects
 ```
 
 ### 4. Operations
