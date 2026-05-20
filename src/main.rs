@@ -39,6 +39,9 @@ use storage::{IntelL0Storage, ManifestInput, StoredRawIntelEvent, UploadedObject
 use symbols::SymbolMatcher;
 use tokio::time::{Duration, sleep};
 
+const SOURCE_FETCH_MAX_ATTEMPTS: usize = 3;
+const SOURCE_FETCH_RETRY_BASE_MS: u64 = 750;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = match Args::parse(std::env::args()) {
@@ -656,6 +659,34 @@ struct SourceFetchRequest<'a> {
 async fn fetch_source_items(
     request: SourceFetchRequest<'_>,
 ) -> Result<SourceFetchResult, Box<dyn Error>> {
+    let mut last_retryable_error: Option<String> = None;
+    for attempt in 1..=SOURCE_FETCH_MAX_ATTEMPTS {
+        match fetch_source_items_once(&request).await {
+            Ok(result) => return Ok(result),
+            Err(error) => {
+                let error_message = error.to_string();
+                if !is_retryable_fetch_error(&error_message) {
+                    return Err(error);
+                }
+                if attempt == SOURCE_FETCH_MAX_ATTEMPTS {
+                    return Err(format!(
+                        "{error_message} after {SOURCE_FETCH_MAX_ATTEMPTS} attempts"
+                    )
+                    .into());
+                }
+                last_retryable_error = Some(error_message);
+                sleep(fetch_retry_delay(attempt)).await;
+            }
+        }
+    }
+    Err(last_retryable_error
+        .unwrap_or_else(|| "source fetch failed".to_owned())
+        .into())
+}
+
+async fn fetch_source_items_once(
+    request: &SourceFetchRequest<'_>,
+) -> Result<SourceFetchResult, Box<dyn Error>> {
     let item_limit = request.balance_policy.effective_item_limit(
         request.source,
         request.source.item_limit(request.default_max_items),
@@ -697,6 +728,21 @@ async fn fetch_source_items(
         )
         .into()),
     }
+}
+
+fn fetch_retry_delay(attempt: usize) -> Duration {
+    Duration::from_millis(SOURCE_FETCH_RETRY_BASE_MS.saturating_mul(attempt as u64))
+}
+
+fn is_retryable_fetch_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("timed out")
+        || lower.contains("connection")
+        || lower.contains("operation timed out")
+        || lower.contains("request timeout")
+        || [408, 425, 429, 500, 502, 503, 504]
+            .iter()
+            .any(|status| lower.contains(&format!("http {status}")))
 }
 
 async fn publish_stored_events(
@@ -845,4 +891,38 @@ impl CrawlSummary {
 struct SourceFailure {
     source_id: String,
     error: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retryable_fetch_errors_cover_transient_source_failures() {
+        assert!(is_retryable_fetch_error(
+            "social_hackernews_bitcoin_rss returned HTTP 502"
+        ));
+        assert!(is_retryable_fetch_error("news feed returned HTTP 503"));
+        assert!(is_retryable_fetch_error("request timed out"));
+        assert!(is_retryable_fetch_error(
+            "connection closed before message completed"
+        ));
+    }
+
+    #[test]
+    fn retryable_fetch_errors_exclude_structural_failures() {
+        assert!(!is_retryable_fetch_error("news returned HTTP 404"));
+        assert!(!is_retryable_fetch_error(
+            "source returned a bot challenge page"
+        ));
+        assert!(!is_retryable_fetch_error(
+            "unsupported fetch_method websocket"
+        ));
+    }
+
+    #[test]
+    fn fetch_retry_delay_uses_short_linear_backoff() {
+        assert_eq!(fetch_retry_delay(1), Duration::from_millis(750));
+        assert_eq!(fetch_retry_delay(2), Duration::from_millis(1_500));
+    }
 }
