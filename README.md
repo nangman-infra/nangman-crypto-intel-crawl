@@ -122,6 +122,8 @@ ECS cluster: ecs-nangman-dev-invest-apn2
 ECS service: svc-nangman-dev-intel-crawl
 ECS task definition: td-nangman-dev-intel-crawl
 ECS container: intel-crawl
+ECS capacity provider: FARGATE_SPOT
+ECS task size: 256 CPU / 512 MiB memory
 CloudWatch log group: /ecs/nangman/dev/intel-crawl
 S3 L0 bucket: nangman-crypto-dev-intel-crawl-l0-962214
 IAM execution role: role-nangman-dev-intel-crawl-exec
@@ -194,9 +196,16 @@ aws logs filter-log-events \
 Current dev deployment notes:
 
 ```text
-GitHub Actions: Quality Checks and SonarQube Scan passed for commit
-b7e885541ad556a951217fe33197da152dbd6ff3 after org-level SONAR_TOKEN and
-SONAR_HOST_URL were available to the workflow.
+GitHub Actions: Quality Checks and SonarQube Scan are required on main.
+Sonar issue count must be zero, not only quality-gate passing.
+
+ECS service: run on FARGATE_SPOT because the worker is stateless and S3 is the
+durable source of truth. Use desiredCount=1 for the dev crawler and keep
+capacityProviderStrategy=[{capacityProvider=FARGATE_SPOT, weight=1, base=0}].
+
+Task size: start at 256 CPU / 512 MiB memory. Recent dev CloudWatch metrics on
+the previous 512 CPU / 1024 MiB task showed low utilization, so increase only
+after CPU, memory, timeout, or OOM evidence.
 
 ECR scan: the debian:bookworm-slim runtime image currently reports package-level
 CRITICAL/HIGH findings in gnutls28/libgcrypt20. Treat the deployed image as a
@@ -206,7 +215,11 @@ to a minimal/distroless image and the scan is rechecked.
 
 Before writing a new event, the worker loads recent RustFS `dedup-index`
 chunks. Repeated runs skip already-written events and only publish NATS pointers
-for newly stored events.
+for newly stored events. After raw events are successfully persisted to S3, those
+stored events are included in `dedup-index` even if optional NATS pointer publish
+is pending. This keeps Spot restarts or temporary NATS outages from writing the
+same raw event again; pending pointer delivery is tracked separately through
+`publish-outbox/status=pending`.
 
 When NATS publishing is enabled, the worker uses JetStream publish with expected
 stream `RAW_INTEL` and waits for the server publish acknowledgment before

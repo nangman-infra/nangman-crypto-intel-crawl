@@ -353,13 +353,13 @@ async fn write_storage_outputs(
     )
     .await?;
     let PublishOutcome {
-        dedup_events,
+        persisted_events,
         publish_error,
         uploaded_objects: publish_uploaded_objects,
     } = publish_stored_events(storage, publisher, &stored_events, summary).await?;
     uploaded_objects.extend(publish_uploaded_objects);
     if let Some(object) = storage
-        .write_dedup_index(&dedup_events, observed_at_ms)
+        .write_dedup_index(&persisted_events, observed_at_ms)
         .await?
     {
         uploaded_objects.push(object);
@@ -540,7 +540,6 @@ async fn publish_stored_events(
 
     let mut published = Vec::new();
     let mut pending = Vec::new();
-    let mut dedup_events = Vec::new();
     let mut uploaded_objects = Vec::new();
     let mut first_error: Option<String> = None;
     for stored in stored_events {
@@ -555,7 +554,6 @@ async fn publish_stored_events(
                     summary.events_published += 1;
                     published.push(pointer);
                 }
-                dedup_events.push(stored.event.clone());
             }
             Err(error) => {
                 if publisher.is_enabled() {
@@ -569,6 +567,10 @@ async fn publish_stored_events(
         }
     }
 
+    let persisted_events = stored_events
+        .iter()
+        .map(|stored| stored.event.clone())
+        .collect();
     let observed_at_ms = Utc::now().timestamp_millis();
     if let Some(object) = storage
         .write_publish_outbox("published", &published, observed_at_ms)
@@ -588,7 +590,7 @@ async fn publish_stored_events(
     }
 
     Ok(PublishOutcome {
-        dedup_events,
+        persisted_events,
         publish_error: first_error,
         uploaded_objects,
     })
@@ -604,7 +606,7 @@ fn run_id() -> String {
 
 #[derive(Debug, Default)]
 struct PublishOutcome {
-    dedup_events: Vec<RawIntelEvent>,
+    persisted_events: Vec<RawIntelEvent>,
     publish_error: Option<String>,
     uploaded_objects: Vec<UploadedObject>,
 }
