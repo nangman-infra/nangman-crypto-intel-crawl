@@ -105,12 +105,7 @@ jobs:
               exit 0
             fi
 
-            analysis_id="$(SONAR_TASK_JSON="${task_json}" python3 -c 'import json, os
-try:
-    print(json.loads(os.environ["SONAR_TASK_JSON"]).get("task", {}).get("analysisId", ""))
-except Exception:
-    print("")
-')"
+            analysis_id="$(SONAR_TASK_JSON="${task_json}" python3 -c 'import json, os; print(json.loads(os.environ["SONAR_TASK_JSON"]).get("task", {}).get("analysisId", ""))' 2>/dev/null || true)"
             if [ -n "${analysis_id}" ]; then
               break
             fi
@@ -129,22 +124,4 @@ except Exception:
             exit 0
           fi
 
-          SONAR_GATE_JSON="${gate_json}" python3 -c 'import json, os, sys
-try:
-    data = json.loads(os.environ["SONAR_GATE_JSON"])
-except Exception as error:
-    print("SonarQube quality gate response was not JSON: {}".format(error))
-    sys.exit(0)
-status = data.get("projectStatus", {})
-print("SonarQube quality gate: {}".format(status.get("status", "UNKNOWN")))
-for condition in status.get("conditions", []):
-    print(
-        "{}: {} actual={} threshold={} comparator={}".format(
-            condition.get("status", "UNKNOWN"),
-            condition.get("metricKey", "unknown_metric"),
-            condition.get("actualValue", "n/a"),
-            condition.get("errorThreshold", "n/a"),
-            condition.get("comparator", "n/a"),
-        )
-    )
-'
+          SONAR_GATE_JSON="${gate_json}" python3 -c 'import json, os; status = json.loads(os.environ["SONAR_GATE_JSON"]).get("projectStatus", {}); print("SonarQube quality gate: {}".format(status.get("status", "UNKNOWN"))); [print("{}: {} actual={} threshold={} comparator={}".format(condition.get("status", "UNKNOWN"), condition.get("metricKey", "unknown_metric"), condition.get("actualValue", "n/a"), condition.get("errorThreshold", "n/a"), condition.get("comparator", "n/a"))) for condition in status.get("conditions", [])]' || true
