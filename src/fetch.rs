@@ -86,4 +86,45 @@ mod tests {
             Some("Wed, 21 Oct 2015 07:28:00 GMT")
         );
     }
+
+    #[test]
+    fn applies_conditional_request_headers() {
+        let client = reqwest::Client::new();
+        let request = apply_cache_headers(
+            client.get("https://example.com/feed.xml"),
+            Some(&CacheHeaders {
+                etag: Some("\"abc\"".to_owned()),
+                last_modified: Some("Wed, 21 Oct 2015 07:28:00 GMT".to_owned()),
+            }),
+        )
+        .build()
+        .expect("request should build");
+
+        assert_eq!(
+            request
+                .headers()
+                .get(IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok()),
+            Some("\"abc\"")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(IF_MODIFIED_SINCE)
+                .and_then(|v| v.to_str().ok()),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT")
+        );
+    }
+
+    #[test]
+    fn ignores_missing_and_blank_cache_metadata() {
+        let mut headers = HeaderMap::new();
+        headers.insert(ETAG, HeaderValue::from_static(""));
+
+        let metadata = metadata_from_headers(reqwest::StatusCode::NOT_MODIFIED, &headers);
+
+        assert_eq!(metadata.http_status, 304);
+        assert_eq!(metadata.etag, None);
+        assert_eq!(metadata.last_modified, None);
+    }
 }
