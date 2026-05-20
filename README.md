@@ -169,8 +169,9 @@ docker buildx build \
   /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
 ```
 
-The ECS task command is intentionally S3-first and does not enable NATS until a
-reachable shared NATS endpoint is explicitly wired:
+The ECS task command is S3-first and publishes optional NATS pointers after raw
+objects are stored. AWS dev currently uses the on-prem NATS endpoint reachable
+through the VPN route to `192.168.10.0/24`:
 
 ```text
 --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com
@@ -179,6 +180,9 @@ reachable shared NATS endpoint is explicitly wired:
 --object-store-force-path-style false
 --schedule-interval-ms 900000
 --max-items-per-source 20
+--nats-url nats://192.168.10.45:4222
+--nats-subject raw_intel_event.created
+--nats-stream RAW_INTEL
 ```
 
 Operate and verify the AWS worker with separate checks instead of treating
