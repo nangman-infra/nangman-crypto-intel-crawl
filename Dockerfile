@@ -8,11 +8,7 @@ COPY . /opt/nangman-crypto/intel-crawl
 
 RUN cargo build --release
 
-FROM public.ecr.aws/docker/library/debian:bookworm-slim AS runtime
-
-RUN mkdir -p /etc/ssl/certs \
-    && mkdir -p /opt/nangman-crypto/intel-crawl/config \
-    && chown -R 10001:10001 /opt/nangman-crypto
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 COPY --from=builder \
     /etc/ssl/certs/ca-certificates.crt \
@@ -25,6 +21,6 @@ COPY --from=builder \
     /opt/nangman-crypto/intel-crawl/config/source-registry.rss-seed.v1.json \
     /opt/nangman-crypto/intel-crawl/config/source-registry.rss-seed.v1.json
 
-USER 10001:10001
+USER nonroot:nonroot
 
 ENTRYPOINT ["/usr/local/bin/intel-crawl-app"]

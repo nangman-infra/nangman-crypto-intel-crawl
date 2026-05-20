@@ -207,10 +207,9 @@ Task size: start at 256 CPU / 512 MiB memory. Recent dev CloudWatch metrics on
 the previous 512 CPU / 1024 MiB task showed low utilization, so increase only
 after CPU, memory, timeout, or OOM evidence.
 
-ECR scan: the debian:bookworm-slim runtime image currently reports package-level
-CRITICAL/HIGH findings in gnutls28/libgcrypt20. Treat the deployed image as a
-functional smoke, not a security-clean runtime, until the runtime base is moved
-to a minimal/distroless image and the scan is rechecked.
+Runtime image: use a nonroot distroless runtime image. The app does not need a
+shell or package manager at runtime; public source fetching and S3 writes are
+handled by the static app process plus CA certificates.
 ```
 
 Before writing a new event, the worker loads recent RustFS `dedup-index`
