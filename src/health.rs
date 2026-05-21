@@ -106,9 +106,29 @@ impl SourceHealthRecord {
         })
     }
 
+    pub(crate) fn skipped_cadence(
+        source: &Source,
+        checked_at_ms: i64,
+        observed_at_ms: i64,
+        next_due_at_ms: i64,
+    ) -> Self {
+        Self::new(HealthRecordInput {
+            source,
+            checked_at_ms,
+            observed_at_ms,
+            status: "skipped_cadence",
+            items_seen: 0,
+            events_written: 0,
+            duplicate_events_skipped: 0,
+            latency_ms: 0,
+            error: Some(format!("next_due_at_ms={next_due_at_ms}")),
+            backoff_state: "none",
+        })
+    }
+
     fn new(input: HealthRecordInput<'_>) -> Self {
         let health_level = match input.status {
-            "ok" | "not_modified" => "healthy",
+            "ok" | "not_modified" | "skipped_cadence" => "healthy",
             "no_items" | "skipped_backoff" => "degraded",
             _ => "blocked",
         };
@@ -273,6 +293,19 @@ mod tests {
         assert_eq!(record.latency_ms, 20);
         assert_eq!(record.items_fetched, 2);
         assert_eq!(record.dedup_dropped, 1);
+    }
+
+    #[test]
+    fn cadence_skip_is_recorded_as_healthy_deferred_fetch() {
+        let record = SourceHealthRecord::skipped_cadence(&source(), 10, 20, 1_000);
+
+        assert_eq!(record.fetch_status, "skipped_cadence");
+        assert_eq!(record.health_level, "healthy");
+        assert_eq!(
+            record.http_status_or_error.as_deref(),
+            Some("next_due_at_ms=1000")
+        );
+        assert_eq!(record.latency_ms, 0);
     }
 
     #[test]

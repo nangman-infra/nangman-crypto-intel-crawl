@@ -41,6 +41,9 @@ use tokio::time::{Duration, sleep};
 
 const SOURCE_FETCH_MAX_ATTEMPTS: usize = 3;
 const SOURCE_FETCH_RETRY_BASE_MS: u64 = 750;
+const HIGH_CADENCE_INTERVAL_MS: i64 = 15 * 60_000;
+const MEDIUM_CADENCE_INTERVAL_MS: i64 = 30 * 60_000;
+const LOW_CADENCE_INTERVAL_MS: i64 = 6 * 60 * 60_000;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -177,6 +180,9 @@ async fn crawl_source(
 ) -> Result<(), Box<dyn Error>> {
     let checked_at_ms = Utc::now().timestamp_millis();
     if should_skip_source_for_backoff(context, source, checked_at_ms, buffers, summary) {
+        return Ok(());
+    }
+    if should_skip_source_for_cadence(context, source, checked_at_ms, buffers, summary) {
         return Ok(());
     }
     let mut source_stats = SourceRunStats::default();
@@ -459,6 +465,59 @@ fn should_skip_source_for_backoff(
     ));
     summary.source_health_written += usize::from(!context.args.dry_run);
     true
+}
+
+fn should_skip_source_for_cadence(
+    context: &CrawlContext<'_>,
+    source: &Source,
+    checked_at_ms: i64,
+    buffers: &mut CrawlBuffers<'_>,
+    summary: &mut CrawlSummary,
+) -> bool {
+    if context.args.source_id.is_some() || context.args.backfill_start_ms.is_some() {
+        return false;
+    }
+    if context.args.backfill_end_ms.is_some() {
+        return false;
+    }
+    let Some(state) = context.source_states.get(source) else {
+        return false;
+    };
+    let Some(last_success_at_ms) = state.last_success_at_ms() else {
+        return false;
+    };
+    let next_due_at_ms = last_success_at_ms.saturating_add(cadence_interval_ms(source));
+    if checked_at_ms >= next_due_at_ms {
+        return false;
+    }
+
+    let observed_at_ms = Utc::now().timestamp_millis();
+    summary.sources_ok += 1;
+    buffers
+        .health_records
+        .push(SourceHealthRecord::skipped_cadence(
+            source,
+            checked_at_ms,
+            observed_at_ms,
+            next_due_at_ms,
+        ));
+    buffers.balance_records.push(SourceBalanceRecord::new(
+        source,
+        SourceRunStats::default(),
+        context.balance_policy,
+        observed_at_ms,
+    ));
+    summary.source_health_written += usize::from(!context.args.dry_run);
+    true
+}
+
+fn cadence_interval_ms(source: &Source) -> i64 {
+    match source.cadence_tier.as_str() {
+        "high" => HIGH_CADENCE_INTERVAL_MS,
+        "medium" => MEDIUM_CADENCE_INTERVAL_MS,
+        "low" => LOW_CADENCE_INTERVAL_MS,
+        _ => HIGH_CADENCE_INTERVAL_MS,
+    }
 }
 
 async fn write_storage_outputs(
@@ -896,6 +955,7 @@ struct SourceFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::AppliesToAssets;
 
     #[test]
     fn retryable_fetch_errors_cover_transient_source_failures() {
@@ -924,5 +984,32 @@ mod tests {
     fn fetch_retry_delay_uses_short_linear_backoff() {
         assert_eq!(fetch_retry_delay(1), Duration::from_millis(750));
         assert_eq!(fetch_retry_delay(2), Duration::from_millis(1_500));
+    }
+
+    #[test]
+    fn cadence_intervals_match_source_tiers() {
+        assert_eq!(cadence_interval_ms(&source("high")), 15 * 60_000);
+        assert_eq!(cadence_interval_ms(&source("medium")), 30 * 60_000);
+        assert_eq!(cadence_interval_ms(&source("low")), 6 * 60 * 60_000);
+    }
+
+    fn source(cadence_tier: &str) -> Source {
+        Source {
+            source_id: "source".to_owned(),
+            source_category: "news".to_owned(),
+            source_name: "Source".to_owned(),
+            source_url: "https://example.com/feed.xml".to_owned(),
+            fetch_method: "rss".to_owned(),
+            adapter: None,
+            max_items_per_run: None,
+            trust_tier: "T1".to_owned(),
+            cadence_tier: cadence_tier.to_owned(),
+            language_hint: "en".to_owned(),
+            enabled: true,
+            source_state: None,
+            activation_blocker: None,
+            top50_relevance_mode: "symbol_alias_match".to_owned(),
+            applies_to_assets: AppliesToAssets::All("all_major_50".to_owned()),
+        }
     }
 }

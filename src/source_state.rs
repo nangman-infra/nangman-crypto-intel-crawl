@@ -56,6 +56,10 @@ impl SourceFetchState {
         self.backoff_until_ms
     }
 
+    pub(crate) fn last_success_at_ms(&self) -> Option<i64> {
+        self.last_success_at_ms
+    }
+
     pub(crate) fn is_backing_off(&self, now_ms: i64) -> bool {
         self.backoff_until_ms.is_some_and(|until| until > now_ms)
     }

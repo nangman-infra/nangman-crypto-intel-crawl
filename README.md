@@ -45,6 +45,10 @@ The worker also writes source coverage and source balance diagnostics. Coverage
 is per major-50 asset, so downstream work can see whether a symbol has only
 global news coverage or real asset-specific sources. Balance diagnostics make
 derivatives and community caps visible instead of silently dropping noisy input.
+The bundled registry currently enables 42 public sources, including 16
+asset-specific developer/governance/project feeds for `AAVE`, `ADA`, `AVAX`,
+`BCH`, `BTC`, `DOGE`, `ETH`, `LINK`, `LTC`, `NEAR`, `SOL`, `SUI`, `TON`, `TRX`,
+`UNI`, and `ZEC`.
 
 Implemented REST adapters:
 
@@ -308,6 +312,17 @@ events per run and 6 events per source. Manual funding history backfill sources
 are selected explicitly and are not treated as the live worker loop. The worker prioritizes assets with
 `rss_seed_status=asset_specific_verified` before global-news-only assets so
 low-signal numeric snapshots do not dominate INTEL-L1.
+
+The live loop also applies source cadence gates from persisted fetch state:
+
+```text
+high   -> at most once per 15 minutes
+medium -> at most once per 30 minutes
+low    -> at most once per 6 hours
+```
+
+Manual `--source-id` and audited backfill windows bypass the cadence gate so
+operator checks do not get hidden by scheduled-loop throttling.
 
 Run a dry check:
 
