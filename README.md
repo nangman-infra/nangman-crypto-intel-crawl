@@ -245,6 +245,11 @@ after CPU, memory, timeout, or OOM evidence.
 Runtime image: use a nonroot distroless runtime image. The app does not need a
 shell or package manager at runtime; public source fetching and S3 writes are
 handled by the static app process plus CA certificates.
+
+Container health: the image exposes a shell-free `--healthcheck` mode that
+parses and validates the bundled source registry, then exits. ECS should use
+`["CMD", "/usr/local/bin/intel-crawl-app", "--healthcheck"]` as the container
+health check command so task health is visible instead of `UNKNOWN`.
 ```
 
 Before writing a new event, the worker loads recent RustFS `dedup-index`

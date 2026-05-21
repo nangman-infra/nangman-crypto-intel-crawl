@@ -23,4 +23,7 @@ COPY --from=builder \
 
 USER nonroot:nonroot
 
+HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["/usr/local/bin/intel-crawl-app", "--healthcheck"]
+
 ENTRYPOINT ["/usr/local/bin/intel-crawl-app"]
