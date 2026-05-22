@@ -145,9 +145,9 @@ manifests/schema=intel_l0_manifest_v1/dt=YYYY-MM-DD/hour=HH/run_id=....json
 AWS dev deployment:
 
 ```text
-Account: 791444962214
+Account: set locally with AWS_ACCOUNT_ID; do not commit account IDs
 Region: ap-northeast-2
-Profile: AdministratorAccess-791444962214
+Profile: set locally with AWS_PROFILE; do not commit local profile names
 ECR repository: ecr-nangman-dev-intel-crawl-apn2
 ECS cluster: ecs-nangman-dev-invest-apn2
 ECS service: svc-nangman-dev-intel-crawl
@@ -156,7 +156,7 @@ ECS container: intel-crawl
 ECS capacity provider: FARGATE_SPOT
 ECS task size: 256 CPU / 512 MiB memory
 CloudWatch log group: /ecs/nangman/dev/intel-crawl
-S3 L0 bucket: nangman-crypto-dev-intel-crawl-l0-962214
+S3 L0 bucket: nangman-crypto-dev-intel-crawl-l0-<account-suffix>
 IAM execution role: role-nangman-dev-intel-crawl-exec
 IAM task role: role-nangman-dev-intel-crawl-task
 ```
@@ -166,11 +166,15 @@ The AWS dev worker uses AWS S3 as the L0 object store:
 ```bash
 cd /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
 
+export AWS_ACCOUNT_ID="<aws-account-id>"
+export AWS_REGION="ap-northeast-2"
+export AWS_PROFILE="<local-aws-profile>"
+
 docker buildx build \
   --platform linux/arm64 \
   --provenance=false \
   --sbom=false \
-  -t 791444962214.dkr.ecr.ap-northeast-2.amazonaws.com/ecr-nangman-dev-intel-crawl-apn2:git-$(git rev-parse --short=12 HEAD)-arm64-single \
+  -t "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecr-nangman-dev-intel-crawl-apn2:git-$(git rev-parse --short=12 HEAD)-arm64-single" \
   --push \
   /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
 ```
@@ -195,37 +199,41 @@ Operate and verify the AWS worker with separate checks instead of treating
 `RUNNING` as healthy:
 
 ```bash
+export AWS_PROFILE="<local-aws-profile>"
+export AWS_REGION="ap-northeast-2"
+export INTEL_CRAWL_L0_BUCKET="nangman-crypto-dev-intel-crawl-l0-<account-suffix>"
+
 aws ecs describe-services \
   --cluster ecs-nangman-dev-invest-apn2 \
   --services svc-nangman-dev-intel-crawl \
-  --profile AdministratorAccess-791444962214 \
-  --region ap-northeast-2
+  --profile "${AWS_PROFILE}" \
+  --region "${AWS_REGION}"
 
 aws ecs list-tasks \
   --cluster ecs-nangman-dev-invest-apn2 \
   --service-name svc-nangman-dev-intel-crawl \
-  --profile AdministratorAccess-791444962214 \
-  --region ap-northeast-2
+  --profile "${AWS_PROFILE}" \
+  --region "${AWS_REGION}"
 
 aws logs describe-log-streams \
   --log-group-name /ecs/nangman/dev/intel-crawl \
   --order-by LastEventTime \
   --descending \
   --max-items 5 \
-  --profile AdministratorAccess-791444962214 \
-  --region ap-northeast-2
+  --profile "${AWS_PROFILE}" \
+  --region "${AWS_REGION}"
 
 aws s3api list-objects-v2 \
-  --bucket nangman-crypto-dev-intel-crawl-l0-962214 \
+  --bucket "${INTEL_CRAWL_L0_BUCKET}" \
   --prefix manifests/schema=intel_l0_manifest_v1/ \
-  --profile AdministratorAccess-791444962214 \
-  --region ap-northeast-2
+  --profile "${AWS_PROFILE}" \
+  --region "${AWS_REGION}"
 
 aws logs filter-log-events \
   --log-group-name /ecs/nangman/dev/intel-crawl \
   --filter-pattern 'panic ?ERROR ?OutOfMemory ?SIGKILL ?Killed ?AccessDenied' \
-  --profile AdministratorAccess-791444962214 \
-  --region ap-northeast-2
+  --profile "${AWS_PROFILE}" \
+  --region "${AWS_REGION}"
 ```
 
 Current dev deployment notes:
