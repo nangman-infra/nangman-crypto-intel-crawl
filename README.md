@@ -181,16 +181,16 @@ docker buildx build \
 
 The ECS task command is S3-first and publishes optional NATS pointers after raw
 objects are stored. AWS dev currently uses the on-prem NATS endpoint reachable
-through the VPN route to `192.168.10.0/24`:
+through the private VPN route to `<private-network-cidr>`:
 
 ```text
 --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com
---object-store-bucket nangman-crypto-dev-intel-crawl-l0-962214
+--object-store-bucket nangman-crypto-dev-intel-crawl-l0-<account-suffix>
 --object-store-region ap-northeast-2
 --object-store-force-path-style false
 --schedule-interval-ms 900000
 --max-items-per-source 20
---nats-url nats://192.168.10.45:4222
+--nats-url nats://<private-nats-host>:4222
 --nats-subject raw_intel_event.created
 --nats-stream RAW_INTEL
 ```

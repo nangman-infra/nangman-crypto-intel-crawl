@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 FROM public.ecr.aws/docker/library/rust:1.94-bookworm AS builder
 
 WORKDIR /opt/nangman-crypto/intel-crawl
