@@ -50,6 +50,22 @@ asset-specific developer/governance/project feeds for `AAVE`, `ADA`, `AVAX`,
 `BCH`, `BTC`, `DOGE`, `ETH`, `LINK`, `LTC`, `NEAR`, `SOL`, `SUI`, `TON`, `TRX`,
 `UNI`, and `ZEC`.
 
+Use the local major-50 source coverage diagnosis before widening crawler runtime
+or opening downstream research gates. It reads only the local source registry
+and can optionally focus on symbols from a candidate gap diagnosis.
+
+```bash
+cd /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
+
+scripts/diagnose-major50-source-coverage.sh \
+  /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app/config/source-registry.rss-seed.v1.json \
+  /tmp/nangman-crypto/intel-crawl-major50-source-coverage.json \
+  /tmp/nangman-crypto/research-current-approved-driver/research_batch_20260523T170654Z/candidate-coverage-gap-diagnosis.json
+```
+
+The command does not fetch sources, read or write S3, publish NATS messages,
+start ECS tasks, or open shadow/paper/live gates.
+
 Implemented REST adapters:
 
 ```text
