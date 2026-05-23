@@ -19,17 +19,18 @@
   },
   "coverage": {
     "universe_asset_count": 50,
-    "enabled_source_count": 53,
+    "enabled_source_count": 58,
     "available_disabled_source_count": 16,
     "global_rss_source_count": 13,
-    "asset_specific_rss_source_count": 39,
+    "asset_specific_rss_source_count": 41,
+    "asset_specific_html_source_count": 3,
     "exchange_notice_rest_source_count": 3,
     "funding_rest_source_count": 3,
     "social_reaction_rss_enabled_count": 0,
     "social_reaction_rss_available_disabled_count": 12,
-    "governance_rss_source_count": 3,
-    "developer_activity_atom_source_count": 25,
-    "asset_specific_coverage_count": 27,
+    "governance_rss_source_count": 4,
+    "developer_activity_atom_source_count": 26,
+    "asset_specific_coverage_count": 32,
     "asset_specific_covered_assets": [
       "AAVE",
       "ADA",
@@ -45,6 +46,7 @@
       "HIVE",
       "LINK",
       "LTC",
+      "LUNC",
       "NEAR",
       "ONDO",
       "PENDLE",
@@ -54,14 +56,18 @@
       "TAO",
       "TON",
       "TRX",
+      "U",
       "UNI",
+      "USDC",
+      "USD1",
+      "WLFI",
       "XRP",
       "ZAMA",
       "ZEC"
     ]
   },
   "universe_assets": [
-    { "asset": "USDC", "reference_symbol_native": "USDCUSDT", "rss_seed_status": "global_news_only" },
+    { "asset": "USDC", "reference_symbol_native": "USDCUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "BTC", "reference_symbol_native": "BTCUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "ETH", "reference_symbol_native": "ETHUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "SOL", "reference_symbol_native": "SOLUSDT", "rss_seed_status": "asset_specific_verified" },
@@ -71,11 +77,11 @@
     { "asset": "XRP", "reference_symbol_native": "XRPUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "DOGE", "reference_symbol_native": "DOGEUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "TST", "reference_symbol_native": "TSTUSDT", "rss_seed_status": "global_news_only" },
-    { "asset": "USD1", "reference_symbol_native": "USD1USDT", "rss_seed_status": "global_news_only" },
+    { "asset": "USD1", "reference_symbol_native": "USD1USDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "DOGS", "reference_symbol_native": "DOGSUSDT", "rss_seed_status": "global_news_only" },
     { "asset": "CHIP", "reference_symbol_native": "CHIPUSDT", "rss_seed_status": "global_news_only" },
     { "asset": "DASH", "reference_symbol_native": "DASHUSDT", "rss_seed_status": "asset_specific_verified" },
-    { "asset": "LUNC", "reference_symbol_native": "LUNCUSDT", "rss_seed_status": "global_news_only" },
+    { "asset": "LUNC", "reference_symbol_native": "LUNCUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "PEPE", "reference_symbol_native": "PEPEUSDT", "rss_seed_status": "global_news_only" },
     { "asset": "LINK", "reference_symbol_native": "LINKUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "PENGU", "reference_symbol_native": "PENGUUSDT", "rss_seed_status": "global_news_only" },
@@ -91,7 +97,7 @@
     { "asset": "SUI", "reference_symbol_native": "SUIUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "LTC", "reference_symbol_native": "LTCUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "XAUT", "reference_symbol_native": "XAUTUSDT", "rss_seed_status": "global_news_only" },
-    { "asset": "WLFI", "reference_symbol_native": "WLFIUSDT", "rss_seed_status": "global_news_only" },
+    { "asset": "WLFI", "reference_symbol_native": "WLFIUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "EUR", "reference_symbol_native": "EURUSDT", "rss_seed_status": "global_news_only" },
     { "asset": "AVAX", "reference_symbol_native": "AVAXUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "BIO", "reference_symbol_native": "BIOUSDT", "rss_seed_status": "asset_specific_verified" },
@@ -110,7 +116,7 @@
     { "asset": "HMSTR", "reference_symbol_native": "HMSTRUSDT", "rss_seed_status": "global_news_only" },
     { "asset": "AAVE", "reference_symbol_native": "AAVEUSDT", "rss_seed_status": "asset_specific_verified" },
     { "asset": "ORDI", "reference_symbol_native": "ORDIUSDT", "rss_seed_status": "global_news_only" },
-    { "asset": "U", "reference_symbol_native": "UUSDT", "rss_seed_status": "global_news_only" }
+    { "asset": "U", "reference_symbol_native": "UUSDT", "rss_seed_status": "asset_specific_verified" }
   ],
   "sources": [
     {
@@ -399,6 +405,19 @@
       "enabled": true,
       "top50_relevance_mode": "direct_asset",
       "applies_to_assets": ["AVAX"]
+    },
+    {
+      "source_id": "governance_wlfi_discourse_latest_rss",
+      "source_category": "governance",
+      "source_name": "World Liberty Financial Governance RSS",
+      "source_url": "https://governance.worldlibertyfinancial.com/latest.rss",
+      "fetch_method": "rss",
+      "trust_tier": "T2",
+      "cadence_tier": "low",
+      "language_hint": "en",
+      "enabled": true,
+      "top50_relevance_mode": "direct_asset",
+      "applies_to_assets": ["WLFI"]
     },
     {
       "source_id": "dev_btc_github_releases_atom",
@@ -726,6 +745,19 @@
       "applies_to_assets": ["RLUSD"]
     },
     {
+      "source_id": "dev_lunc_classic_terra_core_releases_atom",
+      "source_category": "developer_activity",
+      "source_name": "Classic Terra Core GitHub Releases Atom",
+      "source_url": "https://github.com/classic-terra/core/releases.atom",
+      "fetch_method": "rss",
+      "trust_tier": "T1",
+      "cadence_tier": "low",
+      "language_hint": "en",
+      "enabled": true,
+      "top50_relevance_mode": "direct_asset",
+      "applies_to_assets": ["LUNC"]
+    },
+    {
       "source_id": "social_hackernews_crypto_rss",
       "source_category": "social",
       "source_name": "Hacker News Crypto Search RSS",
@@ -1012,6 +1044,45 @@
       "enabled": true,
       "top50_relevance_mode": "direct_asset",
       "applies_to_assets": ["PENDLE"]
+    },
+    {
+      "source_id": "project_usdc_circle_blog_html",
+      "source_category": "project_notice",
+      "source_name": "Circle Blog HTML",
+      "source_url": "https://www.circle.com/blog",
+      "fetch_method": "html_crawl",
+      "trust_tier": "T0",
+      "cadence_tier": "low",
+      "language_hint": "en",
+      "enabled": true,
+      "top50_relevance_mode": "direct_asset",
+      "applies_to_assets": ["USDC"]
+    },
+    {
+      "source_id": "project_usd1_world_liberty_attestation_html",
+      "source_category": "project_notice",
+      "source_name": "World Liberty Financial USD1 Attestation Reports HTML",
+      "source_url": "https://worldlibertyfinancial.com/usd1/attestation-reports",
+      "fetch_method": "html_crawl",
+      "trust_tier": "T0",
+      "cadence_tier": "low",
+      "language_hint": "en",
+      "enabled": true,
+      "top50_relevance_mode": "direct_asset",
+      "applies_to_assets": ["USD1"]
+    },
+    {
+      "source_id": "project_u_union_blog_html",
+      "source_category": "project_notice",
+      "source_name": "Union Blog HTML",
+      "source_url": "https://union.build/blog",
+      "fetch_method": "html_crawl",
+      "trust_tier": "T0",
+      "cadence_tier": "low",
+      "language_hint": "en",
+      "enabled": true,
+      "top50_relevance_mode": "direct_asset",
+      "applies_to_assets": ["U"]
     },
     {
       "source_id": "project_glm_golem_blog_rss",
