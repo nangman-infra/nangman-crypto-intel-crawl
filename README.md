@@ -339,9 +339,11 @@ INTEL_CRAWL_COMMUNITY_MAX_EVENTS_PER_SOURCE=5
 
 Live derivatives REST sources are also clamped by an enterprise safety ceiling of 12
 events per run and 6 events per source. Manual funding history backfill sources
-are selected explicitly and are not treated as the live worker loop. The worker prioritizes assets with
-`rss_seed_status=asset_specific_verified` before global-news-only assets so
-low-signal numeric snapshots do not dominate INTEL-L1.
+are selected explicitly and are not treated as the live worker loop. The worker
+interleaves `rss_seed_status=asset_specific_verified` assets with
+global-news-only assets and rotates the selection by source and time window so
+the same early major-50 symbols do not permanently consume the live snapshot
+budget.
 
 The live loop also applies source cadence gates from persisted fetch state:
 

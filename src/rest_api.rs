@@ -8,34 +8,69 @@ use serde_json::json;
 use std::error::Error;
 use tokio::time::{Duration, sleep};
 
+const LIVE_DERIVATIVES_SELECTION_ROTATION_MS: i64 = 30 * 60_000;
+
+pub(crate) struct RestFetchOptions<'a> {
+    pub(crate) assets: &'a [UniverseAsset],
+    pub(crate) cache_headers: Option<&'a CacheHeaders>,
+    pub(crate) max_items: usize,
+    pub(crate) backfill_start_ms: Option<i64>,
+    pub(crate) backfill_end_ms: Option<i64>,
+    pub(crate) selection_time_ms: i64,
+}
+
 pub(crate) async fn fetch_feed_items(
     client: &reqwest::Client,
     source: &Source,
-    assets: &[UniverseAsset],
-    cache_headers: Option<&CacheHeaders>,
-    max_items: usize,
-    backfill_start_ms: Option<i64>,
-    backfill_end_ms: Option<i64>,
+    options: RestFetchOptions<'_>,
 ) -> Result<SourceFetchResult, Box<dyn Error>> {
     match source.adapter.as_deref() {
         Some("binance_cms_announcement_list") => {
-            fetch_binance_cms_announcements(client, source, cache_headers, max_items).await
+            fetch_binance_cms_announcements(
+                client,
+                source,
+                options.cache_headers,
+                options.max_items,
+            )
+            .await
         }
         Some("binance_usdm_funding_rate_history") => {
-            let (start_ms, end_ms) =
-                required_backfill_window(source, backfill_start_ms, backfill_end_ms)?;
+            let (start_ms, end_ms) = required_backfill_window(
+                source,
+                options.backfill_start_ms,
+                options.backfill_end_ms,
+            )?;
             let items = fetch_binance_usdm_funding_rate_history(
-                client, source, assets, max_items, start_ms, end_ms,
+                client,
+                source,
+                options.assets,
+                options.max_items,
+                start_ms,
+                end_ms,
             )
             .await?;
             Ok(fetched_without_cache_metadata(items))
         }
         Some("binance_usdm_funding_rate_latest") => {
-            let items = fetch_binance_usdm_funding_rates(client, source, assets, max_items).await?;
+            let items = fetch_binance_usdm_funding_rates(
+                client,
+                source,
+                options.assets,
+                options.max_items,
+                options.selection_time_ms,
+            )
+            .await?;
             Ok(fetched_without_cache_metadata(items))
         }
         Some("binance_usdm_open_interest") => {
-            let items = fetch_binance_usdm_open_interest(client, source, assets, max_items).await?;
+            let items = fetch_binance_usdm_open_interest(
+                client,
+                source,
+                options.assets,
+                options.max_items,
+                options.selection_time_ms,
+            )
+            .await?;
             Ok(fetched_without_cache_metadata(items))
         }
         Some(adapter) => {
@@ -219,10 +254,11 @@ async fn fetch_binance_usdm_funding_rates(
     source: &Source,
     assets: &[UniverseAsset],
     max_items: usize,
+    selection_time_ms: i64,
 ) -> Result<Vec<FeedItem>, Box<dyn Error>> {
     let mut items = Vec::new();
     let mut failed_requests = 0usize;
-    for asset in prioritized_derivatives_assets(assets)
+    for asset in prioritized_live_derivatives_assets(assets, &source.source_id, selection_time_ms)
         .into_iter()
         .take(max_items)
     {
@@ -517,10 +553,11 @@ async fn fetch_binance_usdm_open_interest(
     source: &Source,
     assets: &[UniverseAsset],
     max_items: usize,
+    selection_time_ms: i64,
 ) -> Result<Vec<FeedItem>, Box<dyn Error>> {
     let mut items = Vec::new();
     let mut failed_requests = 0usize;
-    for asset in prioritized_derivatives_assets(assets)
+    for asset in prioritized_live_derivatives_assets(assets, &source.source_id, selection_time_ms)
         .into_iter()
         .take(max_items)
     {
@@ -589,6 +626,74 @@ fn prioritized_derivatives_assets(assets: &[UniverseAsset]) -> Vec<&UniverseAsse
             }),
         )
         .collect()
+}
+
+fn prioritized_live_derivatives_assets<'a>(
+    assets: &'a [UniverseAsset],
+    source_id: &str,
+    selection_time_ms: i64,
+) -> Vec<&'a UniverseAsset> {
+    prioritized_live_derivatives_assets_for_seed(
+        assets,
+        live_derivatives_selection_seed(source_id, selection_time_ms),
+    )
+}
+
+fn prioritized_live_derivatives_assets_for_seed(
+    assets: &[UniverseAsset],
+    selection_seed: usize,
+) -> Vec<&UniverseAsset> {
+    let verified = rotated_assets(
+        assets
+            .iter()
+            .filter(|asset| asset.rss_seed_status.as_deref() == Some("asset_specific_verified"))
+            .collect::<Vec<_>>(),
+        selection_seed,
+    );
+    let global_only = rotated_assets(
+        assets
+            .iter()
+            .filter(|asset| asset.rss_seed_status.as_deref() != Some("asset_specific_verified"))
+            .collect::<Vec<_>>(),
+        selection_seed,
+    );
+    interleave_assets(verified, global_only)
+}
+
+fn rotated_assets(mut assets: Vec<&UniverseAsset>, selection_seed: usize) -> Vec<&UniverseAsset> {
+    if !assets.is_empty() {
+        let offset = selection_seed % assets.len();
+        assets.rotate_left(offset);
+    }
+    assets
+}
+
+fn interleave_assets<'a>(
+    primary: Vec<&'a UniverseAsset>,
+    secondary: Vec<&'a UniverseAsset>,
+) -> Vec<&'a UniverseAsset> {
+    let mut ranked = Vec::with_capacity(primary.len() + secondary.len());
+    let max_len = primary.len().max(secondary.len());
+    for index in 0..max_len {
+        if let Some(asset) = primary.get(index) {
+            ranked.push(*asset);
+        }
+        if let Some(asset) = secondary.get(index) {
+            ranked.push(*asset);
+        }
+    }
+    ranked
+}
+
+fn live_derivatives_selection_seed(source_id: &str, selection_time_ms: i64) -> usize {
+    let time_slot = selection_time_ms.max(0) / LIVE_DERIVATIVES_SELECTION_ROTATION_MS;
+    stable_source_offset(source_id).wrapping_add(time_slot as usize)
+}
+
+fn stable_source_offset(source_id: &str) -> usize {
+    source_id.bytes().fold(0usize, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as usize)
+    })
 }
 
 fn with_query(base_url: &str, params: &[(&str, &str)]) -> String {
@@ -804,6 +909,101 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ranked, vec!["BTC", "ETH", "USDC", "TST"]);
+    }
+
+    #[test]
+    fn live_derivatives_assets_interleave_verified_and_global_only_symbols() {
+        let assets = vec![
+            asset("USDC", "asset_specific_verified"),
+            asset("BTC", "asset_specific_verified"),
+            asset("ETH", "asset_specific_verified"),
+            asset("SOL", "asset_specific_verified"),
+            asset("TST", "global_news_only"),
+            asset("DOGS", "global_news_only"),
+            asset("CHIP", "global_news_only"),
+        ];
+
+        let ranked = prioritized_live_derivatives_assets_for_seed(&assets, 0)
+            .into_iter()
+            .map(|asset| asset.asset.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ranked,
+            vec!["USDC", "TST", "BTC", "DOGS", "ETH", "CHIP", "SOL"]
+        );
+    }
+
+    #[test]
+    fn live_derivatives_assets_rotate_between_selection_windows() {
+        let assets = vec![
+            asset("USDC", "asset_specific_verified"),
+            asset("BTC", "asset_specific_verified"),
+            asset("ETH", "asset_specific_verified"),
+            asset("SOL", "asset_specific_verified"),
+            asset("TON", "asset_specific_verified"),
+            asset("ZEC", "asset_specific_verified"),
+            asset("TST", "global_news_only"),
+            asset("DOGS", "global_news_only"),
+            asset("CHIP", "global_news_only"),
+            asset("PEPE", "global_news_only"),
+        ];
+
+        let first_window = prioritized_live_derivatives_assets(&assets, "funding", 0)
+            .into_iter()
+            .take(6)
+            .map(|asset| asset.asset.as_str())
+            .collect::<Vec<_>>();
+        let second_window = prioritized_live_derivatives_assets(
+            &assets,
+            "funding",
+            LIVE_DERIVATIVES_SELECTION_ROTATION_MS,
+        )
+        .into_iter()
+        .take(6)
+        .map(|asset| asset.asset.as_str())
+        .collect::<Vec<_>>();
+
+        assert_ne!(first_window, second_window);
+        assert_eq!(first_window.len(), 6);
+        assert_eq!(second_window.len(), 6);
+    }
+
+    #[test]
+    fn live_derivatives_sources_use_different_asset_offsets() {
+        let assets = vec![
+            asset("USDC", "asset_specific_verified"),
+            asset("BTC", "asset_specific_verified"),
+            asset("ETH", "asset_specific_verified"),
+            asset("SOL", "asset_specific_verified"),
+            asset("TON", "asset_specific_verified"),
+            asset("ZEC", "asset_specific_verified"),
+            asset("TST", "global_news_only"),
+            asset("DOGS", "global_news_only"),
+            asset("CHIP", "global_news_only"),
+            asset("PEPE", "global_news_only"),
+        ];
+
+        let funding_window = prioritized_live_derivatives_assets(
+            &assets,
+            "derivatives_binance_usdm_funding_rate_rest",
+            0,
+        )
+        .into_iter()
+        .take(6)
+        .map(|asset| asset.asset.as_str())
+        .collect::<Vec<_>>();
+        let open_interest_window = prioritized_live_derivatives_assets(
+            &assets,
+            "derivatives_binance_usdm_open_interest_rest",
+            0,
+        )
+        .into_iter()
+        .take(6)
+        .map(|asset| asset.asset.as_str())
+        .collect::<Vec<_>>();
+
+        assert_ne!(funding_window, open_interest_window);
     }
 
     fn asset(asset: &str, rss_seed_status: &str) -> UniverseAsset {

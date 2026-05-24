@@ -238,6 +238,7 @@ async fn crawl_source(
         balance_policy: context.balance_policy,
         backfill_start_ms: context.args.backfill_start_ms,
         backfill_end_ms: context.args.backfill_end_ms,
+        selection_time_ms: checked_at_ms,
     })
     .await;
 
@@ -753,6 +754,7 @@ struct SourceFetchRequest<'a> {
     balance_policy: SourceBalancePolicy,
     backfill_start_ms: Option<i64>,
     backfill_end_ms: Option<i64>,
+    selection_time_ms: i64,
 }
 
 async fn fetch_source_items(
@@ -804,11 +806,14 @@ async fn fetch_source_items_once(
             rest_api::fetch_feed_items(
                 request.client,
                 request.source,
-                &request.registry.universe_assets,
-                request.cache_headers.as_ref(),
-                item_limit,
-                request.backfill_start_ms,
-                request.backfill_end_ms,
+                rest_api::RestFetchOptions {
+                    assets: &request.registry.universe_assets,
+                    cache_headers: request.cache_headers.as_ref(),
+                    max_items: item_limit,
+                    backfill_start_ms: request.backfill_start_ms,
+                    backfill_end_ms: request.backfill_end_ms,
+                    selection_time_ms: request.selection_time_ms,
+                },
             )
             .await
         }
