@@ -8,6 +8,8 @@ const MIN_CONTEXT_BODY_CHARS: usize = 40;
 const MAX_CONTEXT_SCAN_BYTES: usize = 2_000;
 const MAX_CONTEXT_BODY_CHARS: usize = 1_200;
 const PAGE_SUMMARY_ID_SUFFIX: &str = "#page-summary";
+const PAGE_ACTION_SECTION_MARKERS: &[&str] =
+    &["how to buy", "where to buy", "buy now", "start trading"];
 
 pub(crate) async fn fetch_feed_items(
     client: &reqwest::Client,
@@ -357,7 +359,18 @@ fn context_body_from_clean_text(context: &str, title: &str) -> String {
     } else {
         ""
     };
+    let candidate = trim_page_action_sections(candidate).trim();
     truncate_clean_text(candidate, MAX_CONTEXT_BODY_CHARS)
+}
+
+fn trim_page_action_sections(value: &str) -> &str {
+    let lowered = value.to_ascii_lowercase();
+    PAGE_ACTION_SECTION_MARKERS
+        .iter()
+        .filter_map(|marker| lowered.find(marker))
+        .min()
+        .map(|index| value[..index].trim())
+        .unwrap_or(value)
 }
 
 fn truncate_clean_text(value: &str, max_chars: usize) -> String {
@@ -515,6 +528,36 @@ mod tests {
         assert_eq!(page_summary.title, "PEPE");
         assert!(page_summary.body.contains("zero taxes"));
         assert!(!page_summary.body.contains("noisy"));
+    }
+
+    #[test]
+    fn direct_asset_page_summary_trims_purchase_sections() {
+        let source = source("project_pepe_official_html", &["PEPE"]);
+        let body = r#"
+          <html>
+            <head><title>PEPE</title></head>
+            <body>
+              <main>
+                <h1>$pepe</h1>
+                <p>The most memeable memecoin in existence.</p>
+                <p>Launched stealth with no presale, zero taxes, LP burnt and contract renounced, $PEPE is a coin for the people.</p>
+                <h2>How to buy</h2>
+                <p>Create a wallet and buy from an exchange.</p>
+              </main>
+            </body>
+          </html>
+        "#;
+
+        let page_summary = extract_page_summary_item(&source, body).unwrap();
+
+        assert!(page_summary.body.contains("zero taxes"));
+        assert!(
+            !page_summary
+                .body
+                .to_ascii_lowercase()
+                .contains("how to buy")
+        );
+        assert!(!page_summary.body.to_ascii_lowercase().contains("buy from"));
     }
 
     #[test]
