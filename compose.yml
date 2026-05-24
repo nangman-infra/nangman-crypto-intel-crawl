@@ -14,8 +14,8 @@ x-intel-crawl-common: &intel-crawl-common
   environment:
     AWS_ACCESS_KEY_ID: ${INTEL_CRAWL_L0_OBJECT_STORE_ACCESS_KEY_ID}
     AWS_SECRET_ACCESS_KEY: ${INTEL_CRAWL_L0_OBJECT_STORE_SECRET_ACCESS_KEY}
-    AWS_REGION: ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-us-east-1}
-    AWS_DEFAULT_REGION: ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-us-east-1}
+    AWS_REGION: ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-ap-northeast-2}
+    AWS_DEFAULT_REGION: ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-ap-northeast-2}
     AWS_EC2_METADATA_DISABLED: "true"
     INTEL_CRAWL_LOG_LEVEL: ${INTEL_CRAWL_LOG_LEVEL:-info}
   healthcheck:
@@ -40,13 +40,13 @@ services:
       - --nats-stream
       - ${INTEL_CRAWL_NATS_STREAM:-RAW_INTEL}
       - --object-store-endpoint
-      - ${INTEL_CRAWL_L0_OBJECT_STORE_ENDPOINT:-https://s3.nangman.cloud}
+      - ${INTEL_CRAWL_L0_OBJECT_STORE_ENDPOINT:-https://s3.ap-northeast-2.amazonaws.com}
       - --object-store-bucket
-      - ${INTEL_CRAWL_L0_OBJECT_STORE_BUCKET:-intel-crawl-app-l0}
+      - ${INTEL_CRAWL_L0_OBJECT_STORE_BUCKET:-<bucket-name>}
       - --object-store-region
-      - ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-us-east-1}
+      - ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-ap-northeast-2}
       - --object-store-force-path-style
-      - ${INTEL_CRAWL_L0_OBJECT_STORE_FORCE_PATH_STYLE:-true}
+      - ${INTEL_CRAWL_L0_OBJECT_STORE_FORCE_PATH_STYLE:-false}
       - --dedup-lookback-days
       - ${INTEL_CRAWL_DEDUP_LOOKBACK_DAYS:-14}
       - --chunk-max-records

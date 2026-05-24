@@ -677,7 +677,7 @@ async fn write_manifest(
     summary.manifest_written = 1;
     summary.manifest_key = Some(object_key(&object));
     if let Some(error) = publish_error {
-        return Err(format!("NATS publish failed after RustFS upload: {error}").into());
+        return Err(format!("NATS publish failed after S3 upload: {error}").into());
     }
     Ok(())
 }

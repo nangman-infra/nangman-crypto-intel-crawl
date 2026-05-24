@@ -120,8 +120,21 @@ fn validate_config(config: &ObjectStoreConfig) -> Result<(), Box<dyn Error>> {
     if config.endpoint.trim().is_empty() {
         return Err("object store endpoint is required".into());
     }
+    if config
+        .endpoint
+        .trim()
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case("https://s3.nangman.cloud")
+    {
+        return Err("s3.nangman.cloud is RustFS; intel-crawl runtime must use AWS S3".into());
+    }
     if config.bucket.trim().is_empty() {
         return Err("object store bucket is required".into());
+    }
+    if config.bucket.contains('<') || config.bucket.contains('>') {
+        return Err(
+            "object store bucket must be a real AWS S3 bucket name, not a placeholder".into(),
+        );
     }
     if config.region.trim().is_empty() {
         return Err("object store region is required".into());
@@ -145,5 +158,33 @@ mod tests {
         .to_string();
 
         assert!(error.contains("endpoint"));
+    }
+
+    #[test]
+    fn rejects_rustfs_endpoint() {
+        let error = validate_config(&ObjectStoreConfig {
+            endpoint: "https://s3.nangman.cloud".to_owned(),
+            bucket: "bucket".to_owned(),
+            region: "ap-northeast-2".to_owned(),
+            force_path_style: false,
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("RustFS"));
+    }
+
+    #[test]
+    fn rejects_bucket_placeholder() {
+        let error = validate_config(&ObjectStoreConfig {
+            endpoint: "https://s3.ap-northeast-2.amazonaws.com".to_owned(),
+            bucket: "<bucket-name>".to_owned(),
+            region: "ap-northeast-2".to_owned(),
+            force_path_style: false,
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("placeholder"));
     }
 }

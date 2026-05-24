@@ -5,9 +5,10 @@ pub(crate) const DEFAULT_SOURCE_REGISTRY_PATH: &str =
     "/opt/nangman-crypto/intel-crawl/config/source-registry.rss-seed.v1.json";
 pub(crate) const DEFAULT_NATS_SUBJECT: &str = "raw_intel_event.created";
 pub(crate) const DEFAULT_NATS_STREAM: &str = "RAW_INTEL";
-pub(crate) const DEFAULT_OBJECT_STORE_ENDPOINT: &str = "https://s3.nangman.cloud";
-pub(crate) const DEFAULT_OBJECT_STORE_BUCKET: &str = "intel-crawl-app-l0";
-pub(crate) const DEFAULT_OBJECT_STORE_REGION: &str = "us-east-1";
+pub(crate) const DEFAULT_OBJECT_STORE_ENDPOINT: &str = "https://s3.ap-northeast-2.amazonaws.com";
+pub(crate) const DEFAULT_OBJECT_STORE_BUCKET: &str = "<bucket-name>";
+pub(crate) const DEFAULT_OBJECT_STORE_REGION: &str = "ap-northeast-2";
+pub(crate) const DEFAULT_OBJECT_STORE_FORCE_PATH_STYLE: bool = false;
 pub(crate) const DEFAULT_DEDUP_LOOKBACK_DAYS: u16 = 14;
 pub(crate) const DEFAULT_CHUNK_MAX_RECORDS: usize = 1000;
 pub(crate) const DEFAULT_DERIVATIVES_MAX_EVENTS_PER_RUN: usize = 12;
@@ -68,7 +69,7 @@ fn default_args() -> Args {
             endpoint: DEFAULT_OBJECT_STORE_ENDPOINT.to_owned(),
             bucket: DEFAULT_OBJECT_STORE_BUCKET.to_owned(),
             region: DEFAULT_OBJECT_STORE_REGION.to_owned(),
-            force_path_style: true,
+            force_path_style: DEFAULT_OBJECT_STORE_FORCE_PATH_STYLE,
         },
         dedup_lookback_days: DEFAULT_DEDUP_LOOKBACK_DAYS,
         chunk_max_records: DEFAULT_CHUNK_MAX_RECORDS,
@@ -331,7 +332,10 @@ mod tests {
         assert_eq!(args.object_store.endpoint, DEFAULT_OBJECT_STORE_ENDPOINT);
         assert_eq!(args.object_store.bucket, DEFAULT_OBJECT_STORE_BUCKET);
         assert_eq!(args.object_store.region, DEFAULT_OBJECT_STORE_REGION);
-        assert!(args.object_store.force_path_style);
+        assert_eq!(
+            args.object_store.force_path_style,
+            DEFAULT_OBJECT_STORE_FORCE_PATH_STYLE
+        );
         assert_eq!(
             args.derivatives_max_events_per_run,
             DEFAULT_DERIVATIVES_MAX_EVENTS_PER_RUN
@@ -398,13 +402,13 @@ mod tests {
             [
                 "intel-crawl-app".to_owned(),
                 "--object-store-endpoint".to_owned(),
-                "https://s3.nangman.cloud/".to_owned(),
+                "https://s3.ap-northeast-2.amazonaws.com/".to_owned(),
                 "--object-store-bucket".to_owned(),
-                "intel-crawl-app-l0".to_owned(),
+                "nangman-crypto-dev-intel-crawl-l0-000000".to_owned(),
                 "--object-store-region".to_owned(),
-                "us-east-1".to_owned(),
+                "ap-northeast-2".to_owned(),
                 "--object-store-force-path-style".to_owned(),
-                "true".to_owned(),
+                "false".to_owned(),
                 "--dedup-lookback-days".to_owned(),
                 "30".to_owned(),
                 "--chunk-max-records".to_owned(),
@@ -426,10 +430,16 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(args.object_store.endpoint, "https://s3.nangman.cloud");
-        assert_eq!(args.object_store.bucket, "intel-crawl-app-l0");
-        assert_eq!(args.object_store.region, "us-east-1");
-        assert!(args.object_store.force_path_style);
+        assert_eq!(
+            args.object_store.endpoint,
+            "https://s3.ap-northeast-2.amazonaws.com"
+        );
+        assert_eq!(
+            args.object_store.bucket,
+            "nangman-crypto-dev-intel-crawl-l0-000000"
+        );
+        assert_eq!(args.object_store.region, "ap-northeast-2");
+        assert!(!args.object_store.force_path_style);
         assert_eq!(args.dedup_lookback_days, 30);
         assert_eq!(args.chunk_max_records, 500);
         assert_eq!(args.derivatives_max_events_per_run, 25);

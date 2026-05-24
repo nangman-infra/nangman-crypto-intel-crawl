@@ -19,9 +19,9 @@ This app is intentionally narrow:
 ```text
 source-registry.rss-seed.v1.json
   -> enabled rss/rest_api/html_crawl sources
-  -> raw_intel_event JSONL chunks in RustFS
-  -> source-health/source-heal JSONL chunks in RustFS
-  -> dedup-index and crawl manifest in RustFS
+  -> raw_intel_event JSONL chunks in AWS S3
+  -> source-health/source-heal JSONL chunks in AWS S3
+  -> dedup-index and crawl manifest in AWS S3
   -> raw_intel_event.created JetStream-acknowledged NATS storage pointer
 ```
 
@@ -155,13 +155,13 @@ Default registry:
 /opt/nangman-crypto/intel-crawl/config/source-registry.rss-seed.v1.json
 ```
 
-RustFS bucket:
+AWS S3 L0 bucket:
 
 ```text
-intel-crawl-app-l0
+<bucket-name>
 ```
 
-RustFS object layout:
+AWS S3 object layout:
 
 ```text
 raw-intel-events/schema=raw_intel_event_v1/dt=YYYY-MM-DD/hour=HH/source_category=.../source_id=.../run_id=.../part-000001.jsonl
@@ -295,7 +295,7 @@ parses and validates the bundled source registry, then exits. ECS should use
 health check command so task health is visible instead of `UNKNOWN`.
 ```
 
-Before writing a new event, the worker loads recent RustFS `dedup-index`
+Before writing a new event, the worker loads recent S3 `dedup-index`
 compatibility chunks and the candidate-specific `dedup-index-v2` hash-prefix
 shards. Repeated runs skip already-written events and only publish NATS pointers
 for newly stored events. `dedup-index-v2` stores source identity, canonical URL,
@@ -318,7 +318,13 @@ When NATS publishing is enabled, the worker uses JetStream publish with expected
 stream `RAW_INTEL` and waits for the server publish acknowledgment before
 counting an event as published. The NATS message id is the stable
 `raw_intel_event` id. The published payload is `raw_intel_event_created_v2` and
-contains a `storage_ref` pointing at a RustFS JSONL record.
+contains a `storage_ref` pointing at the stored S3 JSONL record.
+
+The current `storage_ref.kind` value is still `rustfs_jsonl_record` for
+backward compatibility with existing downstream contracts. In this project,
+that legacy field name must not be interpreted as a RustFS runtime dependency;
+runtime storage is AWS S3. Renaming the schema enum is a separate cross-app
+migration because `intel-structuring` validates the pointer contract.
 
 Use the smoke test before enabling NATS in a long-running worker:
 
@@ -383,30 +389,30 @@ cargo run \
   --max-items-per-source 2
 ```
 
-Write RustFS JSONL chunks:
+Write AWS S3 JSONL chunks:
 
 ```bash
 AWS_ACCESS_KEY_ID=... \
 AWS_SECRET_ACCESS_KEY=... \
 cargo run \
   -- \
-  --object-store-endpoint https://s3.nangman.cloud \
-  --object-store-bucket intel-crawl-app-l0 \
-  --object-store-region us-east-1 \
-  --object-store-force-path-style true
+  --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com \
+  --object-store-bucket <bucket-name> \
+  --object-store-region ap-northeast-2 \
+  --object-store-force-path-style false
 ```
 
-Publish RustFS-backed created pointers to NATS:
+Publish AWS S3-backed created pointers to NATS:
 
 ```bash
 AWS_ACCESS_KEY_ID=... \
 AWS_SECRET_ACCESS_KEY=... \
 cargo run \
   -- \
-  --object-store-endpoint https://s3.nangman.cloud \
-  --object-store-bucket intel-crawl-app-l0 \
-  --object-store-region us-east-1 \
-  --object-store-force-path-style true \
+  --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com \
+  --object-store-bucket <bucket-name> \
+  --object-store-region ap-northeast-2 \
+  --object-store-force-path-style false \
   --nats-url nats://127.0.0.1:4222 \
   --nats-subject raw_intel_event.created \
   --nats-stream RAW_INTEL
@@ -421,10 +427,10 @@ AWS_SECRET_ACCESS_KEY=... \
 cargo run \
   -- \
   --replay-pending-outbox \
-  --object-store-endpoint https://s3.nangman.cloud \
-  --object-store-bucket intel-crawl-app-l0 \
-  --object-store-region us-east-1 \
-  --object-store-force-path-style true \
+  --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com \
+  --object-store-bucket <bucket-name> \
+  --object-store-region ap-northeast-2 \
+  --object-store-force-path-style false \
   --nats-url nats://127.0.0.1:4222 \
   --nats-subject raw_intel_event.created \
   --nats-stream RAW_INTEL

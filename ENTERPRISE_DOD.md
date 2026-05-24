@@ -10,13 +10,13 @@
 
 ```text
 RSS/REST/static HTML public source fetch
-raw_intel_event JSONL chunk upload to RustFS
+raw_intel_event JSONL chunk upload to AWS S3
 source-local, cross-source content, and near-duplicate dedup
-source_health JSONL chunk upload to RustFS
-source_heal JSONL chunk upload to RustFS
-source_coverage JSONL chunk upload to RustFS
-source_balance JSONL chunk upload to RustFS
-source-fetch-state, dedup-index, and manifest upload to RustFS
+source_health JSONL chunk upload to AWS S3
+source_heal JSONL chunk upload to AWS S3
+source_coverage JSONL chunk upload to AWS S3
+source_balance JSONL chunk upload to AWS S3
+source-fetch-state, dedup-index, and manifest upload to AWS S3
 JetStream-acknowledged NATS pointer publish
 Docker Compose on-prem worker operation
 ```
@@ -62,7 +62,7 @@ derivatives REST sources must have run and per-source caps
 derivatives REST sources must apply the enterprise safety ceiling even if env values are higher
 derivatives REST asset requests must prioritize asset-specific verified symbols before global-news-only symbols
 raw_intel_event must carry content/source quality metadata for INTEL-L1 routing
-dedup_key prevents repeated RustFS/NATS emission across repeated runs
+dedup_key prevents repeated S3/NATS emission across repeated runs
 dedup-index-v2 preserves canonical URL, normalized content hash, and SimHash metadata
 conditional GET state prevents unchanged public sources from being reprocessed every run
 source failures are recorded per source without hiding the failure in the summary
@@ -71,7 +71,7 @@ source failures are recorded per source without hiding the failure in the summar
 ### 3. Delivery durability
 
 ```text
-raw_intel_event is uploaded to RustFS before NATS publish
+raw_intel_event is uploaded to AWS S3 before NATS publish
 raw_intel_event_created_v2 carries bucket/key/line_number/byte_offset/byte_length
 one raw event per object is forbidden; raw events are written as JSONL chunks
 source coverage diagnostics are written once per run
@@ -80,7 +80,7 @@ NATS publish uses JetStream publish, not Core fire-and-forget publish
 publish uses expected stream RAW_INTEL
 publish waits for server ack before incrementing events_published
 NATS message id is stable per raw_intel_event
-NATS publish failure after RustFS upload writes publish-outbox/status=pending
+NATS publish failure after S3 upload writes publish-outbox/status=pending
 NATS publish success writes publish-outbox/status=published
 pending outbox replay republishes pointers without deleting or rewriting raw S3 objects
 ```
@@ -89,13 +89,13 @@ pending outbox replay republishes pointers without deleting or rewriting raw S3 
 
 ```text
 container runs as non-root uid 10001
-runtime output is RustFS/S3-compatible object storage, not local bind-mounted files
+runtime output is AWS S3 object storage, not local bind-mounted files
 container drops Linux capabilities
 container uses no-new-privileges
 container root filesystem is read-only
 Compose healthcheck verifies runtime certificate readability
 NATS server remains a separate app and external Docker network dependency
-RustFS/S3-compatible storage remains outside the app container
+AWS S3 storage remains outside the app container
 intel-crawl-app has no DeleteObject runtime permission
 ```
 
