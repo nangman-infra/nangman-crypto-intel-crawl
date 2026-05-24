@@ -264,7 +264,7 @@ pub(crate) fn build_raw_intel_event_created_pointer(
 }
 
 impl RawIntelEventStorageRef {
-    pub(crate) fn rustfs_jsonl_record(
+    pub(crate) fn legacy_raw_jsonl_record(
         bucket: String,
         key: String,
         line_number: usize,
@@ -274,7 +274,7 @@ impl RawIntelEventStorageRef {
     ) -> Self {
         Self {
             kind: "rustfs_jsonl_record".to_owned(),
-            endpoint_alias: "rustfs-primary".to_owned(),
+            endpoint_alias: "aws-s3-primary".to_owned(),
             bucket,
             key,
             line_number,
@@ -532,7 +532,7 @@ mod tests {
             source_time_range_verified: None,
         };
         let event = build_raw_intel_event(&source, &item, &[], 10);
-        let storage_ref = RawIntelEventStorageRef::rustfs_jsonl_record(
+        let storage_ref = RawIntelEventStorageRef::legacy_raw_jsonl_record(
             "intel-crawl-app-l0".to_owned(),
             "raw-intel-events/schema=raw_intel_event_v1/dt=2026-05-07/hour=10/source_category=project_notice/source_id=project_btc/run_id=test/part-000001.jsonl".to_owned(),
             1,

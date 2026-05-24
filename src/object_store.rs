@@ -1,16 +1,13 @@
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::Client;
-use aws_sdk_s3::config::Builder as S3ConfigBuilder;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
 use std::error::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ObjectStoreConfig {
-    pub(crate) endpoint: String,
     pub(crate) bucket: String,
     pub(crate) region: String,
-    pub(crate) force_path_style: bool,
 }
 
 #[derive(Clone)]
@@ -24,14 +21,10 @@ impl ObjectStore {
         validate_config(&config)?;
         let sdk_config = aws_config::defaults(BehaviorVersion::latest())
             .region(Region::new(config.region.clone()))
-            .endpoint_url(config.endpoint.clone())
             .load()
             .await;
-        let s3_config = S3ConfigBuilder::from(&sdk_config)
-            .force_path_style(config.force_path_style)
-            .build();
         let store = Self {
-            client: Client::from_conf(s3_config),
+            client: Client::new(&sdk_config),
             bucket: config.bucket,
         };
         store.head_bucket().await?;
@@ -117,17 +110,6 @@ impl ObjectStore {
 }
 
 fn validate_config(config: &ObjectStoreConfig) -> Result<(), Box<dyn Error>> {
-    if config.endpoint.trim().is_empty() {
-        return Err("object store endpoint is required".into());
-    }
-    if config
-        .endpoint
-        .trim()
-        .trim_end_matches('/')
-        .eq_ignore_ascii_case("https://s3.nangman.cloud")
-    {
-        return Err("s3.nangman.cloud is RustFS; intel-crawl runtime must use AWS S3".into());
-    }
     if config.bucket.trim().is_empty() {
         return Err("object store bucket is required".into());
     }
@@ -149,38 +131,20 @@ mod tests {
     #[test]
     fn rejects_empty_config_values() {
         let error = validate_config(&ObjectStoreConfig {
-            endpoint: "".to_owned(),
-            bucket: "bucket".to_owned(),
+            bucket: "".to_owned(),
             region: "us-east-1".to_owned(),
-            force_path_style: true,
         })
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("endpoint"));
-    }
-
-    #[test]
-    fn rejects_rustfs_endpoint() {
-        let error = validate_config(&ObjectStoreConfig {
-            endpoint: "https://s3.nangman.cloud".to_owned(),
-            bucket: "bucket".to_owned(),
-            region: "ap-northeast-2".to_owned(),
-            force_path_style: false,
-        })
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("RustFS"));
+        assert!(error.contains("bucket"));
     }
 
     #[test]
     fn rejects_bucket_placeholder() {
         let error = validate_config(&ObjectStoreConfig {
-            endpoint: "https://s3.ap-northeast-2.amazonaws.com".to_owned(),
             bucket: "<bucket-name>".to_owned(),
             region: "ap-northeast-2".to_owned(),
-            force_path_style: false,
         })
         .unwrap_err()
         .to_string();

@@ -75,11 +75,8 @@ log "[1/5] config check"
 ensure_env_file
 require_file "$ENV_FILE"
 load_env_file
-require_env_value "INTEL_CRAWL_L0_OBJECT_STORE_ENDPOINT"
 require_env_value "INTEL_CRAWL_L0_OBJECT_STORE_BUCKET"
 require_env_value "INTEL_CRAWL_L0_OBJECT_STORE_REGION"
-require_env_value "INTEL_CRAWL_L0_OBJECT_STORE_ACCESS_KEY_ID"
-require_env_value "INTEL_CRAWL_L0_OBJECT_STORE_SECRET_ACCESS_KEY"
 check_nats_network
 
 log "[2/5] compose config"

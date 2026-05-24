@@ -219,10 +219,8 @@ objects are stored. AWS dev currently uses the on-prem NATS endpoint reachable
 through the private VPN route to `<private-network-cidr>`:
 
 ```text
---object-store-endpoint https://s3.ap-northeast-2.amazonaws.com
 --object-store-bucket nangman-crypto-dev-intel-crawl-l0-<account-suffix>
 --object-store-region ap-northeast-2
---object-store-force-path-style false
 --schedule-interval-ms 900000
 --max-items-per-source 20
 --nats-url nats://<private-nats-host>:4222
@@ -392,27 +390,21 @@ cargo run \
 Write AWS S3 JSONL chunks:
 
 ```bash
-AWS_ACCESS_KEY_ID=... \
-AWS_SECRET_ACCESS_KEY=... \
+AWS_PROFILE=<local-aws-profile> \
 cargo run \
   -- \
-  --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com \
   --object-store-bucket <bucket-name> \
-  --object-store-region ap-northeast-2 \
-  --object-store-force-path-style false
+  --object-store-region ap-northeast-2
 ```
 
 Publish AWS S3-backed created pointers to NATS:
 
 ```bash
-AWS_ACCESS_KEY_ID=... \
-AWS_SECRET_ACCESS_KEY=... \
+AWS_PROFILE=<local-aws-profile> \
 cargo run \
   -- \
-  --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com \
   --object-store-bucket <bucket-name> \
   --object-store-region ap-northeast-2 \
-  --object-store-force-path-style false \
   --nats-url nats://127.0.0.1:4222 \
   --nats-subject raw_intel_event.created \
   --nats-stream RAW_INTEL
@@ -422,15 +414,12 @@ Replay pending NATS pointer outbox records without deleting or rewriting S3 raw
 events:
 
 ```bash
-AWS_ACCESS_KEY_ID=... \
-AWS_SECRET_ACCESS_KEY=... \
+AWS_PROFILE=<local-aws-profile> \
 cargo run \
   -- \
   --replay-pending-outbox \
-  --object-store-endpoint https://s3.ap-northeast-2.amazonaws.com \
   --object-store-bucket <bucket-name> \
   --object-store-region ap-northeast-2 \
-  --object-store-force-path-style false \
   --nats-url nats://127.0.0.1:4222 \
   --nats-subject raw_intel_event.created \
   --nats-stream RAW_INTEL
