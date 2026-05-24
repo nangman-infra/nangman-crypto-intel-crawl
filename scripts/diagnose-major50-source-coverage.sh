@@ -105,7 +105,9 @@ jq -n \
       | map({($key_name): .key, count: .value});
 
     def candidate_gap_symbols($gap):
-      if ($gap.schema_version? == "intel_candidate_source_gap_diagnosis_v1") then
+      if ($gap.schema_version? == "intel_candidate_source_gap_diagnosis_v2") then
+        [$gap.symbols[]?.symbol]
+      elif ($gap.schema_version? == "intel_candidate_source_gap_diagnosis_v1") then
         [$gap.symbols[]?.symbol]
       elif (($gap.gaps? | type) == "object" and (($gap.gaps.approved_symbols_without_candidate? | type) == "array")) then
         $gap.gaps.approved_symbols_without_candidate
