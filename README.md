@@ -48,8 +48,8 @@ derivatives and community caps visible instead of silently dropping noisy input.
 Coverage records also carry disabled direct-source details, including public
 URLs and activation blockers, so candidate/source-gap tooling can review source
 activation without reparsing the registry.
-The bundled registry currently enables 64 public sources, including 38
-asset-specific developer/governance/project sources for `AAVE`, `ADA`, `AVAX`,
+The bundled registry currently enables 66 public sources, including 40
+asset-specific developer/governance/project sources covering `AAVE`, `ADA`, `AVAX`,
 `BCH`, `BIO`, `BNB`, `BTC`, `DASH`, `DOGE`, `ENA`, `ETH`, `EUR`, `HIVE`,
 `LINK`, `LTC`, `LUNC`, `NEAR`, `NOT`, `ONDO`, `PENDLE`, `PEPE`, `RLUSD`,
 `SOL`, `SUI`, `TAO`, `TON`, `TRUMP`, `TRX`, `U`, `UNI`, `USDC`, `USD1`,
