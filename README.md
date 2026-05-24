@@ -45,6 +45,9 @@ The worker also writes source coverage and source balance diagnostics. Coverage
 is per major-50 asset, so downstream work can see whether a symbol has only
 global news coverage or real asset-specific sources. Balance diagnostics make
 derivatives and community caps visible instead of silently dropping noisy input.
+Coverage records also carry disabled direct-source details, including public
+URLs and activation blockers, so candidate/source-gap tooling can review source
+activation without reparsing the registry.
 The bundled registry currently enables 64 public sources, including 38
 asset-specific developer/governance/project sources for `AAVE`, `ADA`, `AVAX`,
 `BCH`, `BIO`, `BNB`, `BTC`, `DASH`, `DOGE`, `ENA`, `ETH`, `EUR`, `HIVE`,

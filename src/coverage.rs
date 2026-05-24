@@ -17,7 +17,33 @@ pub(crate) struct SourceCoverageRecord {
     enabled_category_counts: BTreeMap<String, usize>,
     direct_source_ids: Vec<String>,
     available_disabled_source_ids: Vec<String>,
+    available_disabled_direct_sources: Vec<AvailableDisabledSourceDetail>,
     quality_gaps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct AvailableDisabledSourceDetail {
+    source_id: String,
+    source_name: String,
+    source_url: String,
+    source_category: String,
+    fetch_method: String,
+    trust_tier: String,
+    activation_blocker: Option<String>,
+}
+
+impl AvailableDisabledSourceDetail {
+    fn from_source(source: &Source) -> Self {
+        Self {
+            source_id: source.source_id.clone(),
+            source_name: source.source_name.clone(),
+            source_url: source.source_url.clone(),
+            source_category: source.source_category.clone(),
+            fetch_method: source.fetch_method.clone(),
+            trust_tier: source.trust_tier.clone(),
+            activation_blocker: source.activation_blocker.clone(),
+        }
+    }
 }
 
 pub(crate) fn build_source_coverage_report(
@@ -57,6 +83,10 @@ fn build_asset_coverage_record(
         enabled_category_counts: coverage.enabled_category_counts,
         direct_source_ids: coverage.direct_source_ids.into_iter().collect(),
         available_disabled_source_ids: coverage.available_disabled_source_ids.into_iter().collect(),
+        available_disabled_direct_sources: coverage
+            .available_disabled_direct_sources
+            .into_values()
+            .collect(),
         quality_gaps,
     }
 }
@@ -78,6 +108,7 @@ struct AssetCoverage {
     enabled_category_counts: BTreeMap<String, usize>,
     direct_source_ids: BTreeSet<String>,
     available_disabled_source_ids: BTreeSet<String>,
+    available_disabled_direct_sources: BTreeMap<String, AvailableDisabledSourceDetail>,
     enabled_direct_source_count: usize,
     enabled_global_source_count: usize,
     available_disabled_direct_source_count: usize,
@@ -111,6 +142,10 @@ impl AssetCoverage {
     fn record_available_disabled_source(&mut self, source: &Source, asset: &str) {
         if source_has_direct_asset(source, asset) {
             self.available_disabled_direct_source_count += 1;
+            self.available_disabled_direct_sources.insert(
+                source.source_id.clone(),
+                AvailableDisabledSourceDetail::from_source(source),
+            );
         } else {
             self.available_disabled_global_source_count += 1;
         }
@@ -227,6 +262,18 @@ mod tests {
             report[1]
                 .quality_gaps
                 .contains(&"missing_enabled_asset_specific_source".to_owned())
+        );
+        assert_eq!(
+            report[1].available_disabled_direct_sources,
+            vec![AvailableDisabledSourceDetail {
+                source_id: "project_DOGE".to_owned(),
+                source_name: "project_DOGE".to_owned(),
+                source_url: "https://example.com/feed.xml".to_owned(),
+                source_category: "project_notice".to_owned(),
+                fetch_method: "rss".to_owned(),
+                trust_tier: "T1".to_owned(),
+                activation_blocker: Some("not_active".to_owned()),
+            }]
         );
     }
 
