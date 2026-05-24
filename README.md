@@ -376,7 +376,9 @@ low    -> at most once per 6 hours
 ```
 
 Manual `--source-id` and audited backfill windows bypass the cadence gate so
-operator checks do not get hidden by scheduled-loop throttling.
+operator checks do not get hidden by scheduled-loop throttling. They also skip
+conditional fetch headers so manual recovery runs are not hidden by a cached
+HTTP 304 response.
 
 Run a dry check:
 

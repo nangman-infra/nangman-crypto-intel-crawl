@@ -230,10 +230,14 @@ async fn crawl_source(
         client: context.client,
         registry: context.registry,
         source,
-        cache_headers: context
-            .source_states
-            .get(source)
-            .map(|state| state.cache_headers()),
+        cache_headers: if should_send_conditional_fetch_headers(context.args) {
+            context
+                .source_states
+                .get(source)
+                .map(|state| state.cache_headers())
+        } else {
+            None
+        },
         default_max_items: context.args.max_items_per_source,
         balance_policy: context.balance_policy,
         backfill_start_ms: context.args.backfill_start_ms,
@@ -277,6 +281,10 @@ async fn crawl_source(
         ),
     }
     Ok(())
+}
+
+fn should_send_conditional_fetch_headers(args: &Args) -> bool {
+    args.source_id.is_none() && args.backfill_start_ms.is_none() && args.backfill_end_ms.is_none()
 }
 
 async fn record_source_items(
@@ -1082,6 +1090,47 @@ mod tests {
         assert_eq!(cadence_interval_ms(&source("high")), 15 * 60_000);
         assert_eq!(cadence_interval_ms(&source("medium")), 30 * 60_000);
         assert_eq!(cadence_interval_ms(&source("low")), 6 * 60 * 60_000);
+    }
+
+    #[test]
+    fn scheduled_runs_send_conditional_fetch_headers() {
+        let args = Args::parse(["intel-crawl-app"].into_iter().map(str::to_owned)).unwrap();
+
+        assert!(should_send_conditional_fetch_headers(&args));
+    }
+
+    #[test]
+    fn manual_source_runs_bypass_conditional_fetch_headers() {
+        let args = Args::parse(
+            [
+                "intel-crawl-app",
+                "--source-id",
+                "project_pepe_official_html",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .unwrap();
+
+        assert!(!should_send_conditional_fetch_headers(&args));
+    }
+
+    #[test]
+    fn backfill_runs_bypass_conditional_fetch_headers() {
+        let args = Args::parse(
+            [
+                "intel-crawl-app",
+                "--backfill-start-ms",
+                "1000",
+                "--backfill-end-ms",
+                "2000",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .unwrap();
+
+        assert!(!should_send_conditional_fetch_headers(&args));
     }
 
     fn source(cadence_tier: &str) -> Source {
