@@ -3,6 +3,11 @@ use crate::item::FeedItem;
 use crate::registry::Source;
 use std::error::Error;
 
+const MIN_ANCHOR_TITLE_CHARS: usize = 8;
+const MIN_CONTEXT_BODY_CHARS: usize = 40;
+const MAX_CONTEXT_SCAN_BYTES: usize = 2_000;
+const MAX_CONTEXT_BODY_CHARS: usize = 1_200;
+
 pub(crate) async fn fetch_feed_items(
     client: &reqwest::Client,
     source: &Source,
@@ -57,14 +62,15 @@ fn extract_anchor_items(base_url: &str, body: &str, max_items: usize) -> Vec<Fee
         let title = clean_html_text(&body[anchor_open_end + 1..anchor_close]);
         cursor = anchor_close + "</a>".len();
 
-        if title.chars().count() < 8 {
+        if should_skip_anchor(&title, &href) {
             continue;
         }
         let url = absolutize_url(base_url, &href);
+        let context_body = extract_context_body(body, anchor_start, cursor, &title);
         items.push(FeedItem {
             id: Some(url.clone()),
             title,
-            body: String::new(),
+            body: context_body,
             url,
             author: None,
             published_at: None,
@@ -89,10 +95,16 @@ fn extract_href(open_tag: &str) -> Option<String> {
         return None;
     }
     let value = chars.take_while(|ch| *ch != quote).collect::<String>();
-    if value.trim().is_empty() || value.starts_with('#') || value.starts_with("javascript:") {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("javascript:")
+        || trimmed.starts_with("mailto:")
+        || trimmed.starts_with("tel:")
+    {
         return None;
     }
-    Some(value)
+    Some(trimmed.to_owned())
 }
 
 fn absolutize_url(base_url: &str, href: &str) -> String {
@@ -107,6 +119,151 @@ fn absolutize_url(base_url: &str, href: &str) -> String {
     }
     let base = base_url.trim_end_matches('/');
     format!("{base}/{href}")
+}
+
+fn should_skip_anchor(title: &str, href: &str) -> bool {
+    title.chars().count() < MIN_ANCHOR_TITLE_CHARS
+        || is_navigation_title(title)
+        || is_static_asset_link(href)
+}
+
+fn is_navigation_title(title: &str) -> bool {
+    let normalized = title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    matches!(
+        normalized.as_str(),
+        "ABOUT"
+            | "ABOUT US"
+            | "APP"
+            | "BLOG"
+            | "CAREERS"
+            | "CONTACT"
+            | "CONTACT US"
+            | "COOKIE POLICY"
+            | "DISCORD"
+            | "DOCS"
+            | "DOCUMENTATION"
+            | "GITHUB"
+            | "GET STARTED"
+            | "HOME"
+            | "LAUNCH APP"
+            | "LEARN MORE"
+            | "LOGIN"
+            | "MEDIUM"
+            | "MENU"
+            | "NEWS"
+            | "PRIVACY"
+            | "PRIVACY POLICY"
+            | "READ MORE"
+            | "SIGN IN"
+            | "TELEGRAM"
+            | "TERMS"
+            | "TERMS OF SERVICE"
+            | "TWITTER"
+            | "X"
+    )
+}
+
+fn is_static_asset_link(href: &str) -> bool {
+    let lower = href.split('?').next().unwrap_or(href).to_ascii_lowercase();
+    matches!(
+        lower.rsplit('.').next(),
+        Some("avif" | "css" | "gif" | "ico" | "jpeg" | "jpg" | "js" | "png" | "svg" | "webp")
+    )
+}
+
+fn extract_context_body(
+    document: &str,
+    anchor_start: usize,
+    anchor_end: usize,
+    title: &str,
+) -> String {
+    let start = find_context_start(document, anchor_start);
+    let end = find_context_end(document, anchor_end);
+    if start >= end || end > document.len() {
+        return String::new();
+    }
+    let context = clean_html_text(&document[start..end]);
+    context_body_from_clean_text(&context, title)
+}
+
+fn find_context_start(document: &str, anchor_start: usize) -> usize {
+    let lookback_start = floor_char_boundary(
+        document,
+        anchor_start.saturating_sub(MAX_CONTEXT_SCAN_BYTES),
+    );
+    let lookback = &document[lookback_start..anchor_start];
+    ["<article", "<li", "<section", "<div", "<p"]
+        .iter()
+        .filter_map(|tag| lookback.rfind(tag).map(|offset| lookback_start + offset))
+        .max()
+        .unwrap_or(lookback_start)
+}
+
+fn find_context_end(document: &str, anchor_end: usize) -> usize {
+    let bounded_end = ceil_char_boundary(
+        document,
+        anchor_end
+            .saturating_add(MAX_CONTEXT_SCAN_BYTES)
+            .min(document.len()),
+    );
+    let lookahead = &document[anchor_end..bounded_end];
+    ["</article>", "</li>", "</section>", "</div>", "</p>"]
+        .iter()
+        .filter_map(|tag| {
+            lookahead
+                .find(tag)
+                .map(|offset| anchor_end + offset + tag.len())
+        })
+        .min()
+        .unwrap_or(bounded_end)
+}
+
+fn floor_char_boundary(value: &str, mut index: usize) -> usize {
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(value: &str, mut index: usize) -> usize {
+    while index < value.len() && !value.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+fn context_body_from_clean_text(context: &str, title: &str) -> String {
+    let trimmed_context = context.trim();
+    if trimmed_context.is_empty() {
+        return String::new();
+    }
+    let trimmed_title = title.trim();
+    let without_title = trimmed_context
+        .strip_prefix(trimmed_title)
+        .unwrap_or(trimmed_context)
+        .trim_matches(|ch: char| ch.is_whitespace() || matches!(ch, '-' | '|' | ':' | '·'));
+    let candidate = if without_title.chars().count() >= MIN_CONTEXT_BODY_CHARS {
+        without_title
+    } else if trimmed_context != trimmed_title
+        && trimmed_context.chars().count() >= MIN_CONTEXT_BODY_CHARS
+    {
+        trimmed_context
+    } else {
+        ""
+    };
+    truncate_clean_text(candidate, MAX_CONTEXT_BODY_CHARS)
+}
+
+fn truncate_clean_text(value: &str, max_chars: usize) -> String {
+    let mut output = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        output.push_str("...");
+    }
+    output
 }
 
 fn clean_html_text(value: &str) -> String {
@@ -144,5 +301,44 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "거래 지원 종료 안내");
         assert_eq!(items[0].url, "https://upbit.com/service_center/notice?id=1");
+        assert_eq!(items[0].body, "");
+    }
+
+    #[test]
+    fn captures_article_card_context_body() {
+        let body = r#"
+          <html><body>
+            <article>
+              <a href="/blog/protocol-upgrade">Protocol upgrade approved</a>
+              <p>Validators approved a network upgrade with a new execution schedule and migration notes for operators.</p>
+            </article>
+          </body></html>
+        "#;
+
+        let items = extract_anchor_items("https://example.org/blog", body, 5);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Protocol upgrade approved");
+        assert_eq!(items[0].url, "https://example.org/blog/protocol-upgrade");
+        assert_eq!(
+            items[0].body,
+            "Validators approved a network upgrade with a new execution schedule and migration notes for operators."
+        );
+    }
+
+    #[test]
+    fn skips_navigation_and_static_asset_links() {
+        let body = r#"
+          <html><body>
+            <a href="/blog">Blog</a>
+            <a href="/assets/logo.svg">Download logo</a>
+            <a href="/updates/token-launch">Token launch details</a>
+          </body></html>
+        "#;
+
+        let items = extract_anchor_items("https://example.org", body, 5);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Token launch details");
     }
 }
