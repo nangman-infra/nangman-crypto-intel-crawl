@@ -141,8 +141,17 @@ jq -n \
             | select(.enabled != true)
             | select(.source_state? == "available_disabled")
             | select(applies_directly_to($symbol))
-            | .source_id
-          ] | unique | sort) as $available_disabled_direct_source_ids
+            | {
+                source_id,
+                source_name:(.source_name // null),
+                source_url:(.source_url // null),
+                source_category:(.source_category // null),
+                fetch_method:(.fetch_method // null),
+                trust_tier:(.trust_tier // null),
+                activation_blocker:(.activation_blocker // null)
+              }
+          ] | unique_by(.source_id) | sort_by(.source_id)) as $available_disabled_direct_sources
+        | ($available_disabled_direct_sources | map(.source_id)) as $available_disabled_direct_source_ids
         | ([
             $sources[]
             | select(.enabled == true)
@@ -171,6 +180,7 @@ jq -n \
             available_disabled_global_source_count:($available_disabled_global_source_ids | length),
             enabled_direct_source_ids:$enabled_direct_source_ids,
             available_disabled_direct_source_ids:$available_disabled_direct_source_ids,
+            available_disabled_direct_sources:$available_disabled_direct_sources,
             quality_gaps:([
               if ($enabled_direct_source_ids | length) == 0
                 then "missing_enabled_asset_specific_source"
@@ -194,6 +204,14 @@ jq -n \
         end
       ) as $focus_records
     | ($candidate_focus_symbols - $universe_symbols) as $unexpected_focus_symbols
+    | ($focus_records | map(select(.enabled_direct_source_count == 0 and .available_disabled_direct_source_count > 0))) as $focus_available_disabled_records
+    | ($focus_records | map(select(.enabled_direct_source_count == 0 and .available_disabled_direct_source_count == 0))) as $focus_missing_inventory_records
+    | ([
+        $focus_available_disabled_records[]
+        | .asset as $asset
+        | .available_disabled_direct_sources[]?
+        | {asset:$asset} + .
+      ]) as $focus_activation_review_sources
     | (
         $reg.coverage.asset_specific_coverage_count? //
         $reg.coverage.asset_specific_enabled_count? //
@@ -243,7 +261,24 @@ jq -n \
             | select(.enabled_direct_source_count == 0)
             | .asset
           ]),
+          candidate_focus_available_disabled_direct_symbols:($focus_available_disabled_records | map(.asset)),
+          candidate_focus_missing_direct_inventory_symbols:($focus_missing_inventory_records | map(.asset)),
+          candidate_focus_activation_blocker_counts:histogram(
+            ($focus_activation_review_sources | map(.activation_blocker // "unknown"));
+            "activation_blocker"
+          ),
           unexpected_candidate_focus_symbols:$unexpected_focus_symbols
+        },
+        source_activation_review:{
+          candidate_focus_available_disabled_direct_sources:$focus_activation_review_sources,
+          candidate_focus_missing_direct_inventory_symbols:($focus_missing_inventory_records | map(.asset)),
+          required_probe_before_enable:($focus_activation_review_sources | map({
+            asset,
+            source_id,
+            source_url,
+            fetch_method,
+            activation_blocker
+          }))
         },
         assets:$records,
         recommended_actions:(
@@ -260,6 +295,14 @@ jq -n \
               then "prioritize_candidate_gap_symbols_when_expanding_source_registry"
               else empty
             end,
+            if (($focus_available_disabled_records | length) > 0)
+              then "probe_candidate_available_disabled_sources_before_enable"
+              else empty
+            end,
+            if (($focus_missing_inventory_records | length) > 0)
+              then "add_public_asset_specific_sources_for_candidate_gap_symbols"
+              else empty
+            end,
             if (($candidate_focus_symbols | length) == 0)
               then "optionally_pass_candidate_gap_diagnosis_to_focus_missing_candidate_symbols"
               else empty
@@ -268,7 +311,74 @@ jq -n \
             "do_not_open_shadow_paper_live_from_source_registry_coverage"
           ]
           | unique
-        )
+        ),
+        next_decision:{
+          schema_version:"intel_crawl_source_coverage_decision_v1",
+          verdict:(
+            if ($unexpected_focus_symbols | length) > 0 then "RECONCILE_CANDIDATE_GAP_UNIVERSE"
+            elif ($candidate_focus_symbols | length) == 0 then "PASS_CANDIDATE_GAP_DIAGNOSIS"
+            elif ($focus_available_disabled_records | length) > 0 then "INSPECT_CANDIDATE_SOURCE_ACTIVATION_BLOCKERS"
+            elif ($focus_missing_inventory_records | length) > 0 then "ADD_CANDIDATE_DIRECT_SOURCE_INVENTORY"
+            elif (($records | map(select(.enabled_direct_source_count == 0)) | length) > 0) then "EXPAND_MAJOR50_DIRECT_SOURCE_COVERAGE"
+            else "NO_SOURCE_COVERAGE_GAP_DETECTED"
+            end
+          ),
+          safe_next_actions:(
+            [
+              if ($unexpected_focus_symbols | length) > 0
+                then "reconcile_candidate_gap_symbols_with_major50_universe"
+                else empty end,
+              if ($candidate_focus_symbols | length) == 0
+                then "rerun_with_candidate_gap_diagnosis"
+                else empty end,
+              if ($focus_available_disabled_records | length) > 0
+                then "probe_candidate_available_disabled_sources_before_enable"
+                else empty end,
+              if ($focus_missing_inventory_records | length) > 0
+                then "add_public_asset_specific_sources_for_candidate_gap_symbols"
+                else empty end,
+              if (($records | map(select(.enabled_direct_source_count == 0)) | length) > 0)
+                then "expand_major50_direct_source_inventory"
+                else empty end
+            ]
+            | unique
+          ),
+          blocked_actions:[
+            "do_not_enable_available_disabled_source_without_probe_evidence",
+            "do_not_use_browser_challenge_or_private_login_sources",
+            "do_not_change_dispatcher_mode_from_source_diagnosis",
+            "do_not_open_shadow_paper_live_from_source_registry_coverage"
+          ],
+          safety:{
+            network_fetch:false,
+            s3_read:false,
+            s3_write:false,
+            nats_publish:false,
+            ecs_task_started:false,
+            registry_modified:false,
+            local_registry_only:true,
+            shadow_paper_live_enabled:false,
+            live_enabled:false,
+            order_execution_enabled:false
+          },
+          evidence:{
+            universe_asset_count:($records | length),
+            candidate_focus_symbol_count:($candidate_focus_symbols | length),
+            candidate_focus_missing_direct_symbol_count:($focus_records | map(select(.enabled_direct_source_count == 0)) | length),
+            candidate_focus_available_disabled_direct_symbol_count:($focus_available_disabled_records | length),
+            candidate_focus_missing_direct_inventory_symbol_count:($focus_missing_inventory_records | length),
+            candidate_focus_missing_direct_symbols:([
+              $focus_records[]
+              | select(.enabled_direct_source_count == 0)
+              | .asset
+            ]),
+            activation_blocker_counts:histogram(
+              ($focus_activation_review_sources | map(.activation_blocker // "unknown"));
+              "activation_blocker"
+            ),
+            unexpected_candidate_focus_symbols:$unexpected_focus_symbols
+          }
+        }
       }
   ' > "$tmp_output"
 
@@ -279,7 +389,8 @@ if [[ -n "$OUTPUT_FILE" ]]; then
     jq -r '
       "universe_asset_count=\(.summary.universe_asset_count)",
       "status_counts=\(.summary.status_counts | map("\(.coverage_status):\(.count)") | join(","))",
-      "candidate_focus_missing_direct_symbols=\(.summary.candidate_focus_missing_direct_symbols | join(","))"
+      "candidate_focus_missing_direct_symbols=\(.summary.candidate_focus_missing_direct_symbols | join(","))",
+      "next_decision_verdict=\(.next_decision.verdict)"
     ' "$tmp_output"
   } >&2
 else

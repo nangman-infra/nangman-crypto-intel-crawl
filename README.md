@@ -68,6 +68,20 @@ scripts/diagnose-major50-source-coverage.sh \
 The command does not fetch sources, read or write S3, publish NATS messages,
 start ECS tasks, or open shadow/paper/live gates.
 
+The output includes a machine-readable `next_decision` for the crawler side of
+the AI-DLC loop:
+
+- `next_decision.verdict`: whether to inspect disabled direct-source blockers,
+  add missing direct-source inventory, expand broader major-50 source coverage,
+  reconcile an out-of-universe candidate gap, or do nothing.
+- `next_decision.safe_next_actions`: the next scheduler-safe actions. Disabled
+  source candidates must be probed before they are enabled in the live worker.
+- `next_decision.blocked_actions`: actions that this diagnosis must not trigger,
+  including registry activation without probe evidence, dispatcher mode changes,
+  shadow/paper/live gates, and browser-challenge or private-login sources.
+- `source_activation_review`: candidate-focus direct sources that are available
+  but disabled, with their `activation_blocker` and public URL for review.
+
 Implemented REST adapters:
 
 ```text
