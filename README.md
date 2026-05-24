@@ -45,12 +45,12 @@ The worker also writes source coverage and source balance diagnostics. Coverage
 is per major-50 asset, so downstream work can see whether a symbol has only
 global news coverage or real asset-specific sources. Balance diagnostics make
 derivatives and community caps visible instead of silently dropping noisy input.
-The bundled registry currently enables 61 public sources, including 35
+The bundled registry currently enables 64 public sources, including 38
 asset-specific developer/governance/project sources for `AAVE`, `ADA`, `AVAX`,
-`BCH`, `BIO`, `BNB`, `BTC`, `DASH`, `DOGE`, `ENA`, `ETH`, `HIVE`, `LINK`, `LTC`,
-`LUNC`, `NEAR`, `NOT`, `ONDO`, `PENDLE`, `RLUSD`, `SOL`, `SUI`, `TAO`, `TON`,
-`TRUMP`, `TRX`, `U`, `UNI`, `USDC`, `USD1`, `WLFI`, `XRP`, `ZAMA`, `ZBT`, and
-`ZEC`.
+`BCH`, `BIO`, `BNB`, `BTC`, `DASH`, `DOGE`, `ENA`, `ETH`, `EUR`, `HIVE`,
+`LINK`, `LTC`, `LUNC`, `NEAR`, `NOT`, `ONDO`, `PENDLE`, `PEPE`, `RLUSD`,
+`SOL`, `SUI`, `TAO`, `TON`, `TRUMP`, `TRX`, `U`, `UNI`, `USDC`, `USD1`,
+`WLFI`, `XRP`, `XUSD`, `ZAMA`, `ZBT`, and `ZEC`.
 
 Use the local major-50 source coverage diagnosis before widening crawler runtime
 or opening downstream research gates. It reads only the local source registry
