@@ -368,6 +368,7 @@ fn trim_page_action_sections(value: &str) -> &str {
     PAGE_ACTION_SECTION_MARKERS
         .iter()
         .filter_map(|marker| lowered.find(marker))
+        .filter(|index| value[..*index].chars().count() >= MIN_CONTEXT_BODY_CHARS)
         .min()
         .map(|index| value[..index].trim())
         .unwrap_or(value)
@@ -558,6 +559,29 @@ mod tests {
                 .contains("how to buy")
         );
         assert!(!page_summary.body.to_ascii_lowercase().contains("buy from"));
+    }
+
+    #[test]
+    fn direct_asset_page_summary_keeps_body_when_action_marker_is_navigation() {
+        let source = source("project_pepe_official_html", &["PEPE"]);
+        let body = r#"
+          <html>
+            <head><title>PEPE</title></head>
+            <body>
+              <main>
+                <nav><a href="/how-to-buy">How to buy</a><a href="/buy">Buy now</a></nav>
+                <h1>$pepe</h1>
+                <p>The most memeable memecoin in existence.</p>
+                <p>Launched stealth with no presale, zero taxes, LP burnt and contract renounced, $PEPE is a coin for the people.</p>
+              </main>
+            </body>
+          </html>
+        "#;
+
+        let page_summary = extract_page_summary_item(&source, body).unwrap();
+
+        assert!(page_summary.body.contains("zero taxes"));
+        assert!(page_summary.body.contains("$pepe"));
     }
 
     #[test]
