@@ -6,7 +6,7 @@ Raw intel crawler for RSS, exchange notices, and low-frequency public context.
 
 - Repository: `git@github.com:nangman-infra/nangman-crypto-intel-crawl.git`
 - Runtime role: L0 raw intelligence collector for AI-DLC alpha discovery.
-- Default deployment shape: one long-running compose/ECS worker.
+- Default deployment shape: one long-running ECS/Fargate Spot worker.
 - State contract: stateless compute; durable state is object-store JSONL,
   manifest, dedup-index, and optional NATS JetStream publish acknowledgments.
 - Default source registry:
@@ -319,10 +319,9 @@ counting an event as published. The NATS message id is the stable
 contains a `storage_ref` pointing at the stored S3 JSONL record.
 
 The current `storage_ref.kind` value is still `rustfs_jsonl_record` for
-backward compatibility with existing downstream contracts. In this project,
-that legacy field name must not be interpreted as a RustFS runtime dependency;
-runtime storage is AWS S3. Renaming the schema enum is a separate cross-app
-migration because `intel-structuring` validates the pointer contract.
+backward compatibility with existing downstream contracts. Runtime storage is
+AWS S3. Renaming the schema enum is a separate cross-app migration because
+`intel-structuring` validates the pointer contract.
 
 Use the smoke test before enabling NATS in a long-running worker:
 
@@ -427,12 +426,18 @@ cargo run \
   --nats-stream RAW_INTEL
 ```
 
-Run as a compose-managed worker:
+ECS runtime validation:
 
 ```bash
-cd /opt/nangman-crypto/intel-crawl
-scripts/setup-host.sh
-scripts/deploy.sh
+AWS_PROFILE=<local-aws-profile> AWS_REGION=ap-northeast-2 \
+aws ecs describe-services \
+  --cluster ecs-nangman-dev-invest-apn2 \
+  --services svc-nangman-dev-intel-crawl
+
+AWS_PROFILE=<local-aws-profile> AWS_REGION=ap-northeast-2 \
+aws logs filter-log-events \
+  --log-group-name /ecs/nangman/dev/intel-crawl \
+  --filter-pattern '{ $.level = "error" }'
 ```
 
 Enterprise completion criteria are tracked in:
