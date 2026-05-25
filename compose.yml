@@ -1,60 +1,9 @@
-name: nangman-crypto-intel-crawl
+# Legacy local compose file.
+#
+# Do not use this file for deployment or runtime verification. The current
+# intel-crawl runtime is deployed through AWS ECS task definitions and IAM
+# access to AWS S3.
 
-x-intel-crawl-common: &intel-crawl-common
-  build:
-    context: ${INTEL_CRAWL_REPO_ROOT:-.}
-    dockerfile: Dockerfile
-  image: nangman-crypto-intel-crawl-app:dev
-  restart: unless-stopped
-  read_only: true
-  cap_drop:
-    - ALL
-  security_opt:
-    - no-new-privileges:true
-  environment:
-    AWS_REGION: ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-ap-northeast-2}
-    AWS_DEFAULT_REGION: ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-ap-northeast-2}
-    AWS_EC2_METADATA_DISABLED: "true"
-    INTEL_CRAWL_LOG_LEVEL: ${INTEL_CRAWL_LOG_LEVEL:-info}
-  healthcheck:
-    disable: true
-  networks:
-    - nangman-crypto-bus
+name: nangman-crypto-intel-crawl-legacy-compose-disabled
 
-services:
-  rss-worker:
-    <<: *intel-crawl-common
-    command:
-      - --source-registry
-      - /opt/nangman-crypto/intel-crawl/config/source-registry.rss-seed.v1.json
-      - --max-items-per-source
-      - ${INTEL_CRAWL_MAX_ITEMS_PER_SOURCE:-20}
-      - --schedule-interval-ms
-      - ${INTEL_CRAWL_SCHEDULE_INTERVAL_MS:-900000}
-      - --nats-url
-      - ${NATS_URL:-nats://nats:4222}
-      - --nats-subject
-      - ${INTEL_CRAWL_NATS_SUBJECT:-raw_intel_event.created}
-      - --nats-stream
-      - ${INTEL_CRAWL_NATS_STREAM:-RAW_INTEL}
-      - --object-store-bucket
-      - ${INTEL_CRAWL_L0_OBJECT_STORE_BUCKET:-<bucket-name>}
-      - --object-store-region
-      - ${INTEL_CRAWL_L0_OBJECT_STORE_REGION:-ap-northeast-2}
-      - --dedup-lookback-days
-      - ${INTEL_CRAWL_DEDUP_LOOKBACK_DAYS:-14}
-      - --chunk-max-records
-      - ${INTEL_CRAWL_CHUNK_MAX_RECORDS:-1000}
-      - --derivatives-max-events-per-run
-      - ${INTEL_CRAWL_DERIVATIVES_MAX_EVENTS_PER_RUN:-12}
-      - --derivatives-max-events-per-source
-      - ${INTEL_CRAWL_DERIVATIVES_MAX_EVENTS_PER_SOURCE:-6}
-      - --community-max-events-per-run
-      - ${INTEL_CRAWL_COMMUNITY_MAX_EVENTS_PER_RUN:-30}
-      - --community-max-events-per-source
-      - ${INTEL_CRAWL_COMMUNITY_MAX_EVENTS_PER_SOURCE:-5}
-
-networks:
-  nangman-crypto-bus:
-    external: true
-    name: ${NANGMAN_NATS_DOCKER_NETWORK:-nangman-crypto-bus}
+services: {}

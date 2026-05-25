@@ -108,8 +108,8 @@ cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 cargo run -- --dry-run --max-items-per-source 2
-sudo docker compose -f /opt/nangman-crypto/intel-crawl/compose.yml --env-file /opt/nangman-crypto/intel-crawl/.env config
-sudo docker compose -f /opt/nangman-crypto/intel-crawl/compose.yml --env-file /opt/nangman-crypto/intel-crawl/.env ps
+aws ecs describe-services --cluster <cluster-name> --services <intel-crawl-service-name>
+aws logs filter-log-events --log-group-name <intel-crawl-log-group-name> --start-time <epoch-ms>
 sudo docker run --rm --network host natsio/nats-box:0.17.0 nats --server nats://127.0.0.1:4222 stream info RAW_INTEL
 ```
 
