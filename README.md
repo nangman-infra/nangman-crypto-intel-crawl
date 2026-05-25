@@ -318,10 +318,9 @@ counting an event as published. The NATS message id is the stable
 `raw_intel_event` id. The published payload is `raw_intel_event_created_v2` and
 contains a `storage_ref` pointing at the stored S3 JSONL record.
 
-The current `storage_ref.kind` value is still `rustfs_jsonl_record` for
-backward compatibility with existing downstream contracts. Runtime storage is
-AWS S3. Renaming the schema enum is a separate cross-app migration because
-`intel-structuring` validates the pointer contract.
+The current `storage_ref.kind` value is `aws_s3_jsonl_record`. Runtime storage
+is AWS S3 through IAM, and `intel-structuring` validates the same pointer
+contract before reading the raw JSONL slice.
 
 Use the smoke test before enabling NATS in a long-running worker:
 

@@ -117,7 +117,7 @@ impl IntelL0Storage {
                     byte_count,
                 });
                 for (event, locator) in chunk.iter().cloned().zip(locators) {
-                    let storage_ref = RawIntelEventStorageRef::legacy_raw_jsonl_record(
+                    let storage_ref = RawIntelEventStorageRef::aws_s3_jsonl_record(
                         self.object_store.bucket().to_owned(),
                         key.clone(),
                         locator.line_number,
