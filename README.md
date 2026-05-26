@@ -439,6 +439,24 @@ aws logs filter-log-events \
   --filter-pattern '{ $.level = "error" }'
 ```
 
+Mattermost runtime alert wrapper:
+
+```bash
+cd /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
+AWS_PROFILE=<local-aws-profile> \
+AWS_REGION=ap-northeast-2 \
+INTEL_CRAWL_L0_BUCKET="nangman-crypto-dev-intel-crawl-l0-<account-suffix>" \
+NANGMAN_ALERT_WEBHOOK_URL="<mattermost-webhook-url>" \
+./scripts/send-runtime-alert.sh
+```
+
+`send-runtime-alert.sh` checks the ECS service, recent CloudWatch error logs,
+and the latest raw intel manifest when `INTEL_CRAWL_L0_BUCKET` is set. It sends
+P1 only when raw intel collection health is suspect. Success summaries are
+disabled by default; use `INTEL_CRAWL_ALERT_INCLUDE_SUCCESS=true` only for a
+temporary heartbeat. The wrapper is read-only and does not restart ECS, write
+S3, publish NATS messages, or open paper/live/order execution.
+
 Enterprise completion criteria are tracked in:
 
 ```text
