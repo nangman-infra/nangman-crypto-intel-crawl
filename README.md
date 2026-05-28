@@ -439,23 +439,25 @@ aws logs filter-log-events \
   --filter-pattern '{ $.level = "error" }'
 ```
 
-Mattermost runtime alert wrapper:
+Pipeline runtime alert wrapper:
 
 ```bash
 cd /Volumes/WD/Developments/nangman-crypto/apps/intel-crawl-app
 AWS_PROFILE=<local-aws-profile> \
 AWS_REGION=ap-northeast-2 \
 INTEL_CRAWL_L0_BUCKET="nangman-crypto-dev-intel-crawl-l0-<account-suffix>" \
-NANGMAN_ALERT_WEBHOOK_URL="<mattermost-webhook-url>" \
+NANGMAN_PIPELINE_ALERT_S3_BUCKET="nangman-crypto-dev-intel-crawl-l0-<account-suffix>" \
 ./scripts/send-runtime-alert.sh
 ```
 
 `send-runtime-alert.sh` checks the ECS service, recent CloudWatch error logs,
-and the latest raw intel manifest when `INTEL_CRAWL_L0_BUCKET` is set. It sends
-P1 only when raw intel collection health is suspect. Success summaries are
-disabled by default; use `INTEL_CRAWL_ALERT_INCLUDE_SUCCESS=true` only for a
-temporary heartbeat. The wrapper is read-only and does not restart ECS, write
-S3, publish NATS messages, or open paper/live/order execution.
+and the latest raw intel manifest when `INTEL_CRAWL_L0_BUCKET` is set. It writes
+a `pipeline_alert_event_v1` S3 event only when raw intel collection health is
+suspect. The central pipeline alert Lambda sends the human-readable Mattermost
+message. Success summaries are disabled by default; use
+`INTEL_CRAWL_ALERT_INCLUDE_SUCCESS=true` only for a temporary heartbeat. The
+wrapper is read-only and does not restart ECS, write business data to S3,
+publish NATS messages, or open paper/live/order execution.
 
 Enterprise completion criteria are tracked in:
 
