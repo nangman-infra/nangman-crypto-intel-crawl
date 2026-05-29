@@ -1,4 +1,4 @@
-use super::*;
+use super::{Error, Source};
 
 pub(in crate::rest_api) fn with_query(base_url: &str, params: &[(&str, &str)]) -> String {
     let separator = if base_url.contains('?') { '&' } else { '?' };

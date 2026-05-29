@@ -1,4 +1,4 @@
-use super::*;
+use super::UniverseAsset;
 
 pub(in crate::rest_api) const LIVE_DERIVATIVES_SELECTION_ROTATION_MS: i64 = 30 * 60_000;
 

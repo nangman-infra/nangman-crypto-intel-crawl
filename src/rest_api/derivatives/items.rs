@@ -1,4 +1,4 @@
-use super::*;
+use super::{BinanceFundingRate, BinanceOpenInterest, FeedItem, json};
 
 pub(in crate::rest_api) fn binance_funding_rate_item(
     record: &BinanceFundingRate,

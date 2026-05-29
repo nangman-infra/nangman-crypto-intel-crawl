@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BinanceFundingRate, BinanceOpenInterest, Error, FeedItem, Source, UniverseAsset,
+    binance_funding_rate_item, binance_open_interest_item, prioritized_live_derivatives_assets,
+    with_query,
+};
 
 pub(in crate::rest_api) async fn fetch_binance_usdm_funding_rates(
     client: &reqwest::Client,
